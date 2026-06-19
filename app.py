@@ -571,8 +571,9 @@ for name, profile in st.session_state.cluster_profiles.items():
     cluster_details.append({
         "Interpreted LGU Nomenclature": name,
         "Population Share": f"{profile.population_ratio * 100:.1f}%",
-        "Dominant Psychological Driver": profile.dominant_driver,
-        "Behavioral Thresholds": f"Relocation: {profile.relocation_threshold} | Resistance: {profile.resistance_threshold}"
+        # BULLETPROOF FIX: Use getattr to prevent crashes from old session state objects
+        "Dominant Psychological Driver": getattr(profile, 'dominant_driver', 'N/A (Clear Cache)'),
+        "Behavioral Thresholds": f"Relocation: {getattr(profile, 'relocation_threshold', 45.0)} | Resistance: {getattr(profile, 'resistance_threshold', 50.0)}"
     })
 st.dataframe(pd.DataFrame(cluster_details), use_container_width=True, hide_index=True)
 
