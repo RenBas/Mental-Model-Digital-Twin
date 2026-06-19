@@ -94,64 +94,50 @@ class ResidentAgent:
             self.is_resisting_lgu = False
 
 class ClusterArchetype:
-    def __init__(self, name, population_ratio, node_baseline_scores, relocation_threshold=45.0, resistance_threshold=50.0):
+    def __init__(self, name, population_ratio, node_baseline_scores, dominant_driver, relocation_threshold=45.0, resistance_threshold=50.0):
         self.name = name
         self.population_ratio = population_ratio
         self.node_baseline_scores = node_baseline_scores 
+        self.dominant_driver = dominant_driver # NEW: Stores the main psychological driver for UI display
         self.relocation_threshold = relocation_threshold
         self.resistance_threshold = resistance_threshold
 
 # ==============================================================================
-# REALISTIC K-MEANS NOMENCLATURE ENGINE
+# REALISTIC K-MEANS NOMENCLATURE ENGINE (FIXED & ENHANCED)
 # ==============================================================================
+
+# Maps the 12 constructs to realistic, LGU-friendly sociological personas
+PERSONA_MAP = {
+    "Prevention and flooding": "Proactive Risk Mitigators",
+    "Coping during flooding": "Resilient Flood Adapters",
+    "Flooding and Family": "Family-Centric Survivors",
+    "Desire for relocation": "Transition-Seeking Residents",
+    "Preference and adaptation": "Adaptive Planners",
+    "Feasibility of relocation": "Pragmatic Relocators",
+    "Fear of housing demolition": "Anxious Property Owners",
+    "Viewpoints towards LGU": "Civic-Engaged Constituents",
+    "Assistance for relocation": "Resource-Dependent Pragmatists",
+    "Rights to live in the area": "Rights-Asserting Residents",
+    "Living in the disaster area": "Resilient Locals",
+    "Family history and identity": "Heritage-Bound Residents"
+}
+
 def generate_lgu_cluster_name(centroids, col_map):
     """
-    Interprets the 36 CAC variables to assign a realistic, sociologically 
-    meaningful nomenclature to the K-Means cluster.
+    Identifies the dominant psychological driver (highest Acceptance + Commitment) 
+    and maps it to a realistic LGU-friendly persona name.
     """
-    # Helper to calculate Action Readiness (Average of Acceptance & Commitment)
-    def get_action_score(node_clean):
-        ac = centroids.get(f"{node_clean}_Acceptance", 0)
-        co = centroids.get(f"{node_clean}_Commitment", 0)
-        return (ac + co) / 2
+    macro_scores = {}
+    for node, clean in col_map.items():
+        ac = centroids.get(f"{clean}_Acceptance", 0)
+        co = centroids.get(f"{clean}_Commitment", 0)
+        macro_scores[node] = ac + co
     
-    # Helper to get Challenge/Friction score
-    def get_challenge_score(node_clean):
-        return centroids.get(f"{node_clean}_Challenge", 0)
-
-    # 1. Calculate Relocation Action Readiness
-    relocation_desire = get_action_score("Desire_relocation")
-    relocation_feasibility = get_action_score("Feasibility_relocation")
-    assistance_action = get_action_score("Assistance_relocation")
+    # Find the dominant driver
+    sorted_nodes = sorted(macro_scores.items(), key=lambda x: x[1], reverse=True)
+    top_node = sorted_nodes[0][0]
     
-    # 2. Calculate Friction & Resistance (High Challenge in key areas)
-    fear_challenge = get_challenge_score("Fear_demolition")
-    rights_challenge = get_challenge_score("Rights_live_area")
-    lgu_challenge = get_challenge_score("Viewpoints_LGU")
-    family_challenge = get_challenge_score("Family_history_identity")
-    
-    # 3. Calculate Coping & Prevention Capacity
-    coping_action = get_action_score("Coping_flooding")
-    prevention_action = get_action_score("Prevention_flooding")
-    
-    # Aggregate Scores
-    overall_action = (relocation_desire + relocation_feasibility + assistance_action) / 3
-    overall_friction = (fear_challenge + rights_challenge + lgu_challenge + family_challenge) / 4
-    overall_coping = (coping_action + prevention_action) / 2
-
-    # Interpretation Logic for Nomenclature
-    if overall_coping > 55 and overall_action < 40:
-        return "Self-Reliant Adapters" # High coping/prevention, but low desire to relocate
-    elif overall_friction > 45 and fear_challenge > 40:
-        return "Rights-Asserting Resisters" # High fear of demolition and strong assertion of rights
-    elif family_challenge > 45 and overall_action < 45:
-        return "Heritage-Bound Residents" # High challenge in leaving family history/identity behind
-    elif overall_action > 55 and overall_friction < 35:
-        return "Proactive Transition Seekers" # High desire/feasibility, low friction/fear
-    elif relocation_desire > 45 and (get_challenge_score("Feasibility_relocation") > 45 or get_challenge_score("Assistance_relocation") > 45):
-        return "Resource-Constrained Pragmatists" # Want to move, but see high challenges in assistance/feasibility
-    else:
-        return "Balanced Community Segment" # No extreme dominant traits
+    return PERSONA_MAP.get(top_node, "Balanced Community Segment"), top_node
 
 class PopulationGenerator:
     def __init__(self, nodes_dict):
@@ -322,10 +308,11 @@ col_map = {
 }
 
 def get_mock_clusters():
+    # Even the mock clusters now use the realistic persona map!
     return {
-        "Resilient Adapters": ClusterArchetype("Resilient Adapters", 0.45, {n: 65.0 for n in nodes.keys()}, 45.0, 50.0),
-        "Fear-Driven Resisters": ClusterArchetype("Fear-Driven Resisters", 0.30, {n: 40.0 for n in nodes.keys()}, 45.0, 50.0),
-        "Pragmatic Waiters": ClusterArchetype("Pragmatic Waiters", 0.25, {n: 50.0 for n in nodes.keys()}, 45.0, 50.0)
+        "Transition-Seeking Residents": ClusterArchetype("Transition-Seeking Residents", 0.45, {n: 65.0 for n in nodes.keys()}, "Desire for relocation", 45.0, 50.0),
+        "Anxious Property Owners": ClusterArchetype("Anxious Property Owners", 0.30, {n: 40.0 for n in nodes.keys()}, "Fear of housing demolition", 45.0, 50.0),
+        "Resilient Flood Adapters": ClusterArchetype("Resilient Flood Adapters", 0.25, {n: 50.0 for n in nodes.keys()}, "Coping during flooding", 45.0, 50.0)
     }
 
 if 'engine' not in st.session_state:
@@ -399,12 +386,19 @@ with st.sidebar:
                             ratio = len(cluster_data) / len(df_scaled)
                             centroids = cluster_data[numeric_cols].mean().to_dict()
                             
-                            # Generate realistic nomenclature based on CAC interpretation
-                            lgu_name = generate_lgu_cluster_name(centroids, col_map)
+                            # Generate realistic nomenclature based on dominant driver
+                            base_name, dominant_driver = generate_lgu_cluster_name(centroids, col_map)
                             
-                            new_profiles[lgu_name] = ClusterArchetype(
-                                name=lgu_name, population_ratio=ratio, node_baseline_scores=centroids,
-                                relocation_threshold=45.0, resistance_threshold=50.0
+                            # BULLETPROOF: Ensure unique dictionary keys to prevent overwrites
+                            final_name = base_name
+                            counter = 1
+                            while final_name in new_profiles:
+                                final_name = f"{base_name} (Segment {counter})"
+                                counter += 1
+                            
+                            new_profiles[final_name] = ClusterArchetype(
+                                name=final_name, population_ratio=ratio, node_baseline_scores=centroids,
+                                dominant_driver=dominant_driver, relocation_threshold=45.0, resistance_threshold=50.0
                             )
                         
                         st.session_state.cluster_profiles = new_profiles
@@ -423,9 +417,6 @@ with st.sidebar:
     else:
         st.info("📝 Using mock data. Upload the 38-column CSV to calibrate with real CAC survey data.")
 
-    # ==============================================================================
-    # UPDATED SIMULATION CONTROLS (Dropdown + Single Run Button)
-    # ==============================================================================
     st.markdown("---")
     st.header("1. Simulation Controls")
     col1, col2 = st.columns([1, 2])
@@ -442,7 +433,6 @@ with st.sidebar:
             st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
             st.rerun()
     with col2:
-        # Dropdown for steps 2 through 10
         steps_to_run = st.selectbox("Steps to Simulate", [2, 3, 4, 5, 6, 7, 8, 9, 10], index=8)
         if st.button(f"Run {steps_to_run} Steps", use_container_width=True):
             for _ in range(steps_to_run):
@@ -488,7 +478,6 @@ if not st.session_state.agents:
 
 metrics = st.session_state.analytics.get_behavioral_metrics()
 
-# ROW 1: KPI CARDS
 st.subheader("Community Behavioral Outcomes")
 st.caption("*Note: Behaviors start at 0%. Use the dropdown and 'Run' button in the sidebar to simulate resident decision-making over time.*")
 col1, col2, col3, col4 = st.columns(4)
@@ -499,7 +488,6 @@ col4.metric("Resisting LGU", f"{metrics['Resisting LGU (%)']:.1f}%")
 
 st.markdown("---")
 
-# ROW 2: NETWORK GRAPH & CLUSTER BREAKDOWN
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
@@ -552,7 +540,6 @@ with col_right:
 
 st.markdown("---")
 
-# REGRESSION ANALYSIS SECTION
 st.subheader("Regression Analysis & Causal Pathways")
 st.info("The statistical backbone of the Digital Twin. These 18 unidirectional pathways dictate how interventions ripple through the community's psychology.")
 reg_data = []
@@ -570,27 +557,27 @@ st.dataframe(df_reg, use_container_width=True, hide_index=True, height=400)
 
 st.markdown("---")
 
-# K-Means Cluster Profiling (Now with Realistic Nomenclature)
+# ==============================================================================
+# ENHANCED K-MEANS CLUSTER PROFILING (WITH NOMENCLATURE EXPLANATIONS)
+# ==============================================================================
 st.subheader("Socio-Psychological Cluster Profiling (K-Means Results)")
 if st.session_state.data_calibrated:
-    st.info("The following profiles were dynamically extracted from your uploaded survey data. Nomenclature is interpreted based on the cluster's unique Challenge, Acceptance, and Commitment dynamics.")
-    cluster_details = []
-    for name, profile in st.session_state.cluster_profiles.items():
-        sorted_nodes = sorted(profile.node_baseline_scores.items(), key=lambda x: x[1], reverse=True)
-        top_traits = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_nodes[:2]]
-        
-        cluster_details.append({
-            "Interpreted LGU Nomenclature": name,
-            "Population Share": f"{profile.population_ratio * 100:.1f}%",
-            "Dominant Psychological Traits": " | ".join(top_traits)
-        })
-    st.dataframe(pd.DataFrame(cluster_details), use_container_width=True, hide_index=True)
+    st.success("✅ The following profiles were dynamically extracted from your uploaded survey data. Nomenclature is interpreted based on the cluster's dominant psychological driver.")
 else:
-    st.warning("No real data uploaded. Showing default mock profiles. Upload a CSV and click 'Recalibrate' to see actual K-Means results with interpreted nomenclature.")
+    st.info("ℹ️ Showing default baseline profiles. Upload a CSV and click 'Recalibrate' to generate data-driven nomenclature.")
+
+cluster_details = []
+for name, profile in st.session_state.cluster_profiles.items():
+    cluster_details.append({
+        "Interpreted LGU Nomenclature": name,
+        "Population Share": f"{profile.population_ratio * 100:.1f}%",
+        "Dominant Psychological Driver": profile.dominant_driver,
+        "Behavioral Thresholds": f"Relocation: {profile.relocation_threshold} | Resistance: {profile.resistance_threshold}"
+    })
+st.dataframe(pd.DataFrame(cluster_details), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
-# CAC FRAMEWORK SCATTER PLOT
 st.subheader("CAC Framework Breakdown (Challenge, Acceptance, Commitment)")
 st.info("Visualizing the 12 constructs. X-axis: Challenge, Y-axis: Acceptance. Bubble size represents Commitment.")
 
@@ -612,7 +599,6 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 
 st.markdown("---")
 
-# Policy Insights
 st.subheader("Policy Insights & Recommendations for LGU & Superintendents")
 insights = []
 if nodes["Assistance for relocation"].current_score < 40:
@@ -628,7 +614,6 @@ for insight in insights:
 
 st.markdown("---")
 
-# ROW 3: TIMELINE
 st.subheader("Simulation Timeline")
 if len(st.session_state.history) > 1:
     hist_df = pd.DataFrame(st.session_state.history)
@@ -640,6 +625,5 @@ if len(st.session_state.history) > 1:
 else:
     st.info(f"Select a number of steps from the dropdown and click **'Run'** in the sidebar to see how interventions ripple through the community over time.")
 
-# Footer
 st.markdown("---")
 st.caption("*Note: Current simulation parameters, regression weights, and socio-psychological clusters are calibrated using baseline data from Sitio Dal-og (N=140). Projections for other barangays assume similar socio-psychological dynamics unless localized data is uploaded.*")
