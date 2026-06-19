@@ -386,12 +386,13 @@ if len(st.session_state.history) > 1:
     hist_df = pd.DataFrame(st.session_state.history)
     hist_df['Step'] = range(len(hist_df))
     
-    fig_time = px.line(hist_df, x='Step', y=['Relocated (%)', 'Evacuating (%)', 'Resisting LGU (%)'],
+    # FIX: Melt the dataframe to a "long" format which Plotly Express requires for multi-line charts
+    cols_to_plot = ['Relocated (%)', 'Evacuating (%)', 'Resisting LGU (%)']
+    hist_df_melted = hist_df.melt(id_vars=['Step'], value_vars=cols_to_plot, var_name='Metric', value_name='Percentage')
+    
+    # Now plot using the melted dataframe
+    fig_time = px.line(hist_df_melted, x='Step', y='Percentage', color='Metric',
                        title='Macro-Metrics Over Time Steps', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
 else:
     st.info("Click **'Run 10 Steps'** in the sidebar to see how interventions ripple through the community over time.")
-
-# Footer
-st.markdown("---")
-st.caption("*Note: Current simulation parameters, regression weights, and socio-psychological clusters are calibrated using baseline data from Sitio Dal-og (N=140). Projections for other barangays assume similar socio-psychological dynamics unless localized data is uploaded.*")
