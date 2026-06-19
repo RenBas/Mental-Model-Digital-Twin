@@ -4,6 +4,9 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
+import io
 
 # ==============================================================================
 # LAYER 1: THE MATHEMATICAL ENGINE (System Dynamics)
@@ -95,7 +98,7 @@ class ResidentAgent:
             self.is_resisting_lgu = False
 
 class ClusterArchetype:
-    def __init__(self, name, population_ratio, node_baseline_scores, relocation_threshold=65.0, resistance_threshold=70.0):
+    def __init__(self, name, population_ratio, node_baseline_scores, relocation_threshold=65.0, resistance_threshold=65.0):
         self.name = name
         self.population_ratio = population_ratio
         self.node_baseline_scores = node_baseline_scores
@@ -126,13 +129,9 @@ class PopulationGenerator:
             for _ in range(cluster_counts[name]):
                 individual_states = {}
                 for node_name in self.node_names:
-                    # 1. Start with the cluster's specific baseline
                     baseline = profile.node_baseline_scores.get(node_name, 50.0)
-                    # 2. Add the macro-engine's current deviation (from interventions)
                     macro_deviation = self.nodes_dict[node_name].current_score - 50.0
-                    # 3. Add natural human variance (noise)
                     noise = np.random.normal(0, 5.0)
-                    
                     individual_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
                 
                 agents.append(ResidentAgent(current_agent_id, name, individual_states, profile))
@@ -221,17 +220,19 @@ def initialize_model():
         ("Family history and identity", "Living in the disaster area", 0.373)
     ]
     edges = [MentalModelEdge(s, t, c, nodes) for s, t, c in edge_data]
-    
-    # Mock K-Means Clusters (Replace with actual data later)
-    clusters = {
+    return nodes, edges
+
+nodes, edges = initialize_model()
+
+# Generate Mock Clusters (Fallback if no CSV is uploaded)
+def get_mock_clusters():
+    return {
         "Resilient Adapters": ClusterArchetype("Resilient Adapters", 0.45, {n: 65.0 for n in nodes.keys()}, 55.0, 80.0),
         "Fear-Driven Resisters": ClusterArchetype("Fear-Driven Resisters", 0.30, {n: 40.0 for n in nodes.keys()}, 85.0, 45.0),
         "Pragmatic Waiters": ClusterArchetype("Pragmatic Waiters", 0.25, {n: 50.0 for n in nodes.keys()}, 65.0, 65.0)
     }
-    return nodes, edges, clusters
 
-nodes, edges, cluster_profiles = initialize_model()
-
+# Initialize Session State
 if 'engine' not in st.session_state:
     st.session_state.engine = SimulationEngine(nodes, edges, damping_factor=0.5)
     st.session_state.generator = PopulationGenerator(nodes)
@@ -241,6 +242,8 @@ if 'engine' not in st.session_state:
     st.session_state.step_count = 0
     st.session_state.flood_sev = 0.3
     st.session_state.lgu_threat = False
+    st.session_state.cluster_profiles = get_mock_clusters()
+    st.session_state.data_calibrated = False
 
 # ==============================================================================
 # STREAMLIT UI: SIDEBAR CONTROLS
@@ -258,6 +261,79 @@ with st.sidebar:
         "Barangay Mohon (Coming Soon)"
     ])
     
+    st.markdown("---")
+    st.header("📊 Data Upload & Calibration")
+    
+    # Create CSV Template for Download
+    template_data = {
+        'Respondent_Name': ['Juan Dela Cruz', 'Maria Santos'],
+        'Barangay_Name': ['Sitio Dal-og', 'Sitio Dal-og']
+    }
+    for node in nodes.keys():
+        template_data[node] = [50, 60] # Dummy values
+    df_template = pd.DataFrame(template_data)
+    csv_template = df_template.to_csv(index=False).encode('utf-8')
+    
+    st.download_button(
+        label="📥 Download CSV Template",
+        data=csv_template,
+        file_name='twin_data_template.csv',
+        mime='text/csv',
+        help="Download this template, fill it with your survey data, and upload it below."
+    )
+
+    uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
+
+    if uploaded_file is not None:
+        try:
+            df_raw = pd.read_csv(uploaded_file)
+            required_cols = ['Respondent_Name', 'Barangay_Name'] + list(nodes.keys())
+            
+            if not all(col in df_raw.columns for col in required_cols):
+                st.error("❌ Error: CSV is missing required columns. Please use the template.")
+            else:
+                st.success(f"✅ Loaded data for {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
+                
+                n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3, 
+                                       help="How many distinct socio-psychological profiles to extract from your data.")
+                
+                if st.button("🔄 Recalibrate Model with Uploaded Data", use_container_width=True):
+                    with st.spinner("Running K-Means Clustering..."):
+                        df_numeric = df_raw[list(nodes.keys())]
+                        
+                        # Scale data to 0-100 to match the mental model baseline
+                        scaler = MinMaxScaler(feature_range=(0, 100))
+                        df_scaled = pd.DataFrame(scaler.fit_transform(df_numeric), columns=df_numeric.columns)
+                        
+                        # Run K-Means
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                        df_scaled['Cluster'] = kmeans.fit_predict(df_scaled)
+                        
+                        # Build new cluster profiles
+                        new_profiles = {}
+                        for i in range(n_clusters):
+                            cluster_data = df_scaled[df_scaled['Cluster'] == i]
+                            ratio = len(cluster_data) / len(df_scaled)
+                            centroids = cluster_data[list(nodes.keys())].mean().to_dict()
+                            
+                            name = f"Profile {i+1}"
+                            new_profiles[name] = ClusterArchetype(
+                                name=name,
+                                population_ratio=ratio,
+                                node_baseline_scores=centroids,
+                                relocation_threshold=65.0, 
+                                resistance_threshold=65.0
+                            )
+                        
+                        st.session_state.cluster_profiles = new_profiles
+                        st.session_state.data_calibrated = True
+                        st.success("Model successfully recalibrated with real data!")
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+    else:
+        st.info("📝 Using mock data. Upload CSV to calibrate with real survey data.")
+
     st.markdown("---")
     st.header("1. Simulation Controls")
     col1, col2 = st.columns(2)
@@ -280,7 +356,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("2. Population Settings")
-    pop_size = st.slider("Total Residents", 140, 5000, 1000, step=100)
+    pop_size = st.slider("Total Residents to Simulate", 140, 5000, 1000, step=100)
     
     st.markdown("---")
     st.header("3. Environmental Triggers")
@@ -292,12 +368,11 @@ with st.sidebar:
     with st.expander("Adjust Baseline Scores (0-100)", expanded=False):
         for node_name in nodes.keys():
             val = st.slider(node_name, 0, 100, 50, key=f"slider_{node_name}")
-            # Update macro engine directly based on slider
             st.session_state.engine.nodes[node_name].current_score = float(val)
             st.session_state.engine.nodes[node_name].previous_delta = float(val) - 50.0
 
     if st.button("Apply Settings & Generate Population", use_container_width=True):
-        st.session_state.agents = st.session_state.generator.generate_population(pop_size, cluster_profiles)
+        st.session_state.agents = st.session_state.generator.generate_population(pop_size, st.session_state.cluster_profiles)
         for agent in st.session_state.agents:
             agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
         st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
@@ -305,7 +380,7 @@ with st.sidebar:
 
 # Ensure population exists for initial rendering
 if not st.session_state.agents:
-    st.session_state.agents = st.session_state.generator.generate_population(1000, cluster_profiles)
+    st.session_state.agents = st.session_state.generator.generate_population(1000, st.session_state.cluster_profiles)
     for agent in st.session_state.agents:
         agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
     st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
@@ -380,19 +455,22 @@ with col_right:
 
 st.markdown("---")
 
-# ROW 3: TIMELINE
+# ROW 3: TIMELINE (With Plotly Express Fix)
 st.subheader("Simulation Timeline")
 if len(st.session_state.history) > 1:
     hist_df = pd.DataFrame(st.session_state.history)
     hist_df['Step'] = range(len(hist_df))
     
-    # FIX: Melt the dataframe to a "long" format which Plotly Express requires for multi-line charts
+    # FIX: Melt the dataframe to a "long" format which Plotly Express requires
     cols_to_plot = ['Relocated (%)', 'Evacuating (%)', 'Resisting LGU (%)']
     hist_df_melted = hist_df.melt(id_vars=['Step'], value_vars=cols_to_plot, var_name='Metric', value_name='Percentage')
     
-    # Now plot using the melted dataframe
     fig_time = px.line(hist_df_melted, x='Step', y='Percentage', color='Metric',
                        title='Macro-Metrics Over Time Steps', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
 else:
     st.info("Click **'Run 10 Steps'** in the sidebar to see how interventions ripple through the community over time.")
+
+# Footer
+st.markdown("---")
+st.caption("*Note: Current simulation parameters, regression weights, and socio-psychological clusters are calibrated using baseline data from Sitio Dal-og (N=140). Projections for other barangays assume similar socio-psychological dynamics unless localized data is uploaded.*")
