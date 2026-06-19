@@ -20,10 +20,12 @@ class MentalModelNode:
         self.previous_delta = 0.0
 
 class MentalModelEdge:
-    def __init__(self, source_name, target_name, coefficient, nodes_dict):
+    # FIX 5: Added r_square to the Edge class
+    def __init__(self, source_name, target_name, coefficient, r_square, nodes_dict):
         self.source_name = source_name
         self.target_name = target_name
         self.coefficient = coefficient
+        self.r_square = r_square
         self.source_node = nodes_dict[source_name]
         self.target_node = nodes_dict[target_name]
 
@@ -35,11 +37,6 @@ class SimulationEngine:
         self.incoming_edges = {name: [] for name in self.nodes.keys()}
         for edge in self.edges:
             self.incoming_edges[edge.target_name].append((edge.source_name, edge.coefficient))
-
-    def apply_intervention(self, node_name, magnitude):
-        if node_name in self.nodes:
-            self.nodes[node_name].current_score += magnitude
-            self.nodes[node_name].previous_delta = magnitude
 
     def step(self):
         new_deltas = {name: 0.0 for name in self.nodes.keys()}
@@ -59,11 +56,13 @@ class SimulationEngine:
 # ==============================================================================
 
 class ResidentAgent:
-    def __init__(self, agent_id, cluster_name, node_states, archetype):
+    def __init__(self, agent_id, cluster_name, node_states, cac_states, archetype):
         self.agent_id = agent_id
         self.cluster_name = cluster_name
         self.node_states = node_states  
+        self.cac_states = cac_states  # FIX 4: Store the 36 CAC variables for scatter plotting
         self.archetype = archetype
+        # FIX 1 & 2: Start all behavioral flags as False (Zero)
         self.has_relocated = False
         self.will_evacuate = False
         self.is_adapting_in_place = False
@@ -103,6 +102,30 @@ class ClusterArchetype:
         self.node_baseline_scores = node_baseline_scores 
         self.relocation_threshold = relocation_threshold
         self.resistance_threshold = resistance_threshold
+
+# FIX 3: Nomenclature Generator for LGU-friendly cluster names
+def generate_lgu_cluster_name(centroids, col_map):
+    macro_scores = {}
+    for node, clean in col_map.items():
+        ac = centroids.get(f"{clean}_Acceptance", 0)
+        co = centroids.get(f"{clean}_Commitment", 0)
+        macro_scores[node] = ac + co
+    
+    sorted_nodes = sorted(macro_scores.items(), key=lambda x: x[1], reverse=True)
+    top1 = sorted_nodes[0][0]
+    
+    if "Assistance" in top1 or "Feasibility" in top1:
+        return "Resource-Ready Relocators"
+    elif "Fear" in top1 or "Rights" in top1:
+        return "Rights-Asserting Resisters"
+    elif "Coping" in top1 or "Prevention" in top1:
+        return "Proactive Adapters"
+    elif "Family" in top1 or "Identity" in top1:
+        return "Heritage-Bound Residents"
+    elif "Desire" in top1 or "Preference" in top1:
+        return "Transition-Seeking Residents"
+    else:
+        return "Balanced Community Segment"
 
 class PopulationGenerator:
     def __init__(self, nodes_dict):
@@ -160,8 +183,13 @@ class PopulationGenerator:
                         macro_deviation = self.nodes_dict[node_name].current_score - 50.0
                         noise = np.random.normal(0, 5.0)
                         agent_macro_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
+                        # Fallback CAC for mock data
+                        individual_cac_states[f"{self.col_map[node_name]}_Challenge"] = 33.3
+                        individual_cac_states[f"{self.col_map[node_name]}_Acceptance"] = 33.3
+                        individual_cac_states[f"{self.col_map[node_name]}_Commitment"] = 33.3
                 
-                agents.append(ResidentAgent(current_agent_id, name, agent_macro_states, profile))
+                # Pass both macro and CAC states to the agent
+                agents.append(ResidentAgent(current_agent_id, name, agent_macro_states, individual_cac_states, profile))
                 current_agent_id += 1
         return agents
 
@@ -202,6 +230,16 @@ class CommunityAnalytics:
         cluster_stats['Population Count'] = self.df['Cluster'].value_counts()
         return cluster_stats.reset_index()
 
+    # FIX 4: Calculate actual CAC averages from the agents for the scatter plot
+    def get_cac_averages(self, col_map):
+        cac_avgs = {}
+        for node, clean in col_map.items():
+            for cac in ['Challenge', 'Acceptance', 'Commitment']:
+                key = f"{clean}_{cac}"
+                vals = [agent.cac_states.get(key, 0) for agent in self.agents]
+                cac_avgs[f"{node} ({cac})"] = np.mean(vals) if vals else 0
+        return cac_avgs
+
 # ==============================================================================
 # STREAMLIT APP INITIALIZATION & SESSION STATE
 # ==============================================================================
@@ -226,27 +264,28 @@ def initialize_model():
     }
     nodes = {name: MentalModelNode(name, *vals) for name, vals in nodes_data.items()}
     
+    # FIX 5: Added R-Square values to the edge data
     edge_data = [
-        ("Prevention and flooding", "Living in the disaster area", 0.715),
-        ("Coping during flooding", "Prevention and flooding", 1.003),
-        ("Coping during flooding", "Flooding and Family", 0.734), 
-        ("Flooding and Family", "Desire for relocation", 1.109),
-        ("Desire for relocation", "Preference and adaptation", 0.941),
-        ("Fear of housing demolition", "Coping during flooding", 1.021),
-        ("Feasibility of relocation", "Desire for relocation", 0.961),
-        ("Preference and adaptation", "Fear of housing demolition", 0.867),
-        ("Preference and adaptation", "Feasibility of relocation", 1.020),
-        ("Fear of housing demolition", "Rights to live in the area", 0.805),
-        ("Rights to live in the area", "Viewpoints towards LGU", 0.931),
-        ("Viewpoints towards LGU", "Fear of housing demolition", 0.976),
-        ("Viewpoints towards LGU", "Assistance for relocation", 0.943),
-        ("Assistance for relocation", "Feasibility of relocation", 0.991),
-        ("Family history and identity", "Rights to live in the area", 0.717),
-        ("Living in the disaster area", "Rights to live in the area", 0.595),
-        ("Assistance for relocation", "Desire for relocation", 0.980),
-        ("Family history and identity", "Living in the disaster area", 0.373)
+        ("Prevention and flooding", "Living in the disaster area", 0.715, 0.502),
+        ("Coping during flooding", "Prevention and flooding", 1.003, 0.692),
+        ("Coping during flooding", "Flooding and Family", 0.734, 0.756), 
+        ("Flooding and Family", "Desire for relocation", 1.109, 0.894),
+        ("Desire for relocation", "Preference and adaptation", 0.941, 0.933),
+        ("Fear of housing demolition", "Coping during flooding", 1.021, 0.932),
+        ("Feasibility of relocation", "Desire for relocation", 0.961, 0.969),
+        ("Preference and adaptation", "Fear of housing demolition", 0.867, 0.780),
+        ("Preference and adaptation", "Feasibility of relocation", 1.020, 0.939),
+        ("Fear of housing demolition", "Rights to live in the area", 0.805, 0.817),
+        ("Rights to live in the area", "Viewpoints towards LGU", 0.931, 0.774),
+        ("Viewpoints towards LGU", "Fear of housing demolition", 0.976, 0.846),
+        ("Viewpoints towards LGU", "Assistance for relocation", 0.943, 0.718),
+        ("Assistance for relocation", "Feasibility of relocation", 0.991, 0.939),
+        ("Family history and identity", "Rights to live in the area", 0.717, 0.698),
+        ("Living in the disaster area", "Rights to live in the area", 0.595, 0.337),
+        ("Assistance for relocation", "Desire for relocation", 0.980, 0.957),
+        ("Family history and identity", "Living in the disaster area", 0.373, 0.198)
     ]
-    edges = [MentalModelEdge(s, t, c, nodes) for s, t, c in edge_data]
+    edges = [MentalModelEdge(s, t, c, r2, nodes) for s, t, c, r2 in edge_data]
     return nodes, edges
 
 nodes, edges = initialize_model()
@@ -309,10 +348,7 @@ with st.sidebar:
     df_template = pd.DataFrame(template_data)
     csv_template = df_template.to_csv(index=False).encode('utf-8')
     
-    st.download_button(
-        label="📥 Download True CAC CSV Template (38 Columns)",
-        data=csv_template, file_name='twin_cac_data_template.csv', mime='text/csv'
-    )
+    st.download_button(label="📥 Download True CAC CSV Template (38 Columns)", data=csv_template, file_name='twin_cac_data_template.csv', mime='text/csv')
 
     uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
 
@@ -324,17 +360,14 @@ with st.sidebar:
                 st.error(f"❌ Error: CSV is missing columns. Missing: {missing_cols[:3]}...")
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                
                 n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3)
                 
                 if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
                     with st.spinner("Running K-Means on 36 CAC dimensions..."):
                         numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
                         df_numeric = df_raw[numeric_cols]
-                        
                         scaler = MinMaxScaler(feature_range=(0, 100))
                         df_scaled = pd.DataFrame(scaler.fit_transform(df_numeric), columns=numeric_cols)
-                        
                         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
                         df_scaled['Cluster'] = kmeans.fit_predict(df_scaled)
                         
@@ -344,7 +377,10 @@ with st.sidebar:
                             ratio = len(cluster_data) / len(df_scaled)
                             centroids = cluster_data[numeric_cols].mean().to_dict()
                             
-                            name = f"Profile {i+1}"
+                            # FIX 3: Generate LGU-friendly name
+                            lgu_name = generate_lgu_cluster_name(centroids, col_map)
+                            name = f"{lgu_name} (Profile {i+1})"
+                            
                             new_profiles[name] = ClusterArchetype(
                                 name=name, population_ratio=ratio, node_baseline_scores=centroids,
                                 relocation_threshold=45.0, resistance_threshold=50.0
@@ -352,15 +388,16 @@ with st.sidebar:
                         
                         st.session_state.cluster_profiles = new_profiles
                         st.session_state.data_calibrated = True
-                        
-                        # Auto-set population to exact CSV size and instantly evaluate agents
                         st.session_state.uploaded_pop_size = len(df_raw)
-                        st.session_state.agents = st.session_state.generator.generate_population(len(df_raw), new_profiles)
-                        for agent in st.session_state.agents:
-                            agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
-                        st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
                         
-                        st.success(f"Model recalibrated! Population automatically set to {len(df_raw)} residents.")
+                        # FIX 1 & 2: Generate agents but DO NOT evaluate decisions yet. 
+                        # This ensures KPIs start at 0% until "Run" is clicked.
+                        st.session_state.agents = st.session_state.generator.generate_population(len(df_raw), new_profiles)
+                        st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
+                        st.session_state.history = [] # Reset timeline
+                        st.session_state.step_count = 0
+                        
+                        st.success(f"Model recalibrated! Population set to {len(df_raw)}. Click 'Run' to simulate behaviors.")
                         st.rerun()
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -375,11 +412,19 @@ with st.sidebar:
             st.session_state.engine = SimulationEngine(nodes, edges, damping_factor=0.5)
             st.session_state.history = []
             st.session_state.step_count = 0
+            # Reset agent behaviors to 0
+            for agent in st.session_state.agents:
+                agent.has_relocated = False
+                agent.will_evacuate = False
+                agent.is_adapting_in_place = False
+                agent.is_resisting_lgu = False
+            st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
             st.rerun()
     with col2:
         if st.button("Run 1 Step", use_container_width=True):
             st.session_state.engine.step()
             st.session_state.step_count += 1
+            # FIX 1 & 2: NOW we evaluate decisions
             for agent in st.session_state.agents:
                 agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
             st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
@@ -415,15 +460,14 @@ with st.sidebar:
 
     if st.button("Apply Settings & Generate Population", use_container_width=True):
         st.session_state.agents = st.session_state.generator.generate_population(pop_size, st.session_state.cluster_profiles)
-        for agent in st.session_state.agents:
-            agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
+        # DO NOT evaluate decisions here either, wait for "Run"
         st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
+        st.session_state.history = []
+        st.session_state.step_count = 0
         st.rerun()
 
 if not st.session_state.agents:
     st.session_state.agents = st.session_state.generator.generate_population(st.session_state.uploaded_pop_size, st.session_state.cluster_profiles)
-    for agent in st.session_state.agents:
-        agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
     st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
 
 # ==============================================================================
@@ -434,6 +478,7 @@ metrics = st.session_state.analytics.get_behavioral_metrics()
 
 # ROW 1: KPI CARDS
 st.subheader("Community Behavioral Outcomes")
+st.caption("*Note: Behaviors start at 0%. Click 'Run 1 Step' or 'Run 10 Steps' in the sidebar to simulate resident decision-making.*")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Population", f"{metrics['Total Population']:,}")
 col2.metric("Projected to Relocate", f"{metrics['Projected to Relocate (%)']:.1f}%")
@@ -454,7 +499,6 @@ with col_left:
         G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
     
     pos = nx.spring_layout(G, k=0.35, iterations=50, seed=42)
-    
     edge_x, edge_y = [], []
     for edge in G.edges(data=True):
         x0, y0 = pos[edge[0]]
@@ -463,7 +507,6 @@ with col_left:
         edge_y.extend([y0, y1, None])
     
     edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'), hoverinfo='none', mode='lines')
-    
     node_x, node_y, node_text, node_color = [], [], [], []
     for node in G.nodes(data=True):
         x, y = pos[node[0]]
@@ -482,11 +525,10 @@ with col_left:
                               margin=dict(b=20,l=5,r=5,t=40), xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                               yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
     st.plotly_chart(fig_net, use_container_width=True)
-    
-    st.caption("🎨 **Graph Legend:** Node colors represent the current psychological intensity (Score 0-100). **Yellow** indicates a low score (e.g., low commitment/high challenge), while **Dark Purple** indicates a high score (e.g., high acceptance/commitment). Edge thickness represents the regression coefficient (strength of influence).")
+    st.caption("🎨 **Graph Legend:** Node colors represent psychological intensity (0-100). **Yellow** = Low Score, **Dark Purple** = High Score. Edge thickness represents the regression coefficient.")
 
 with col_right:
-    st.subheader("Cluster Archetype Breakdown")
+    st.subheader("Behavioral Distribution by Psychological Cluster")
     cluster_df = st.session_state.analytics.get_cluster_breakdown()
     
     df_melted = cluster_df.melt(id_vars=['Cluster'], value_vars=['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %'], 
@@ -498,17 +540,35 @@ with col_right:
 
 st.markdown("---")
 
+# FIX 5: REGRESSION ANALYSIS SECTION
+st.subheader("Regression Analysis & Causal Pathways")
+st.info("The statistical backbone of the Digital Twin. These 18 unidirectional pathways dictate how interventions ripple through the community's psychology.")
+reg_data = []
+for edge in edges:
+    impact = "Very High" if edge.coefficient > 0.9 else "High" if edge.coefficient > 0.7 else "Moderate"
+    reg_data.append({
+        "Source Construct": edge.source_name,
+        "Target Construct": edge.target_name,
+        "Regression Coeff.": edge.coefficient,
+        "R-Square": edge.r_square,
+        "Impact Strength": impact
+    })
+df_reg = pd.DataFrame(reg_data)
+st.dataframe(df_reg, use_container_width=True, hide_index=True, height=400)
+
+st.markdown("---")
+
 # K-Means Cluster Profiling
 st.subheader("Socio-Psychological Cluster Profiling (K-Means Results)")
 if st.session_state.data_calibrated:
-    st.info("The following profiles were dynamically extracted from your uploaded survey data using K-Means clustering.")
+    st.info("The following profiles were dynamically extracted from your uploaded survey data and assigned LGU-friendly nomenclature.")
     cluster_details = []
     for name, profile in st.session_state.cluster_profiles.items():
         sorted_nodes = sorted(profile.node_baseline_scores.items(), key=lambda x: x[1], reverse=True)
         top_traits = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_nodes[:2]]
         
         cluster_details.append({
-            "Cluster Name": name,
+            "LGU Cluster Nomenclature": name,
             "Population Share": f"{profile.population_ratio * 100:.1f}%",
             "Dominant Psychological Traits": " | ".join(top_traits)
         })
@@ -518,47 +578,39 @@ else:
 
 st.markdown("---")
 
-# CAC Framework Breakdown
+# FIX 4: CAC FRAMEWORK SCATTER PLOT
 st.subheader("CAC Framework Breakdown (Challenge, Acceptance, Commitment)")
-cac_data = []
-for name, node in nodes.items():
-    cac_data.append({
-        "Construct": name,
-        "Challenge (%)": node.baseline_cac['Challenge'],
-        "Acceptance (%)": node.baseline_cac['Acceptance'],
-        "Commitment (%)": node.baseline_cac['Commitment']
-    })
-df_cac = pd.DataFrame(cac_data)
+st.info("Visualizing the 12 constructs. X-axis: Challenge, Y-axis: Acceptance. Bubble size represents Commitment.")
 
-col_cac_chart, col_cac_table = st.columns([2, 1])
-with col_cac_chart:
-    df_cac_melted = df_cac.melt(id_vars='Construct', value_vars=['Challenge (%)', 'Acceptance (%)', 'Commitment (%)'], 
-                                var_name='CAC Variable', value_name='Percentage')
-    fig_cac = px.bar(df_cac_melted, x='Construct', y='Percentage', color='CAC Variable', barmode='stack',
-                     title='Baseline CAC Distribution per Construct', height=400,
-                     color_discrete_map={'Challenge (%)': '#FF4B4B', 'Acceptance (%)': '#FFA500', 'Commitment (%)': '#00CC00'})
-    st.plotly_chart(fig_cac, use_container_width=True)
-with col_cac_table:
-    st.dataframe(df_cac, use_container_width=True, hide_index=True, height=400)
+cac_avgs = st.session_state.analytics.get_cac_averages(col_map)
+scatter_data = []
+for node, clean in col_map.items():
+    scatter_data.append({
+        "Construct": node,
+        "Challenge": cac_avgs.get(f"{node} (Challenge)", 0),
+        "Acceptance": cac_avgs.get(f"{node} (Acceptance)", 0),
+        "Commitment": cac_avgs.get(f"{node} (Commitment)", 0)
+    })
+df_scatter = pd.DataFrame(scatter_data)
+
+fig_scatter = px.scatter(df_scatter, x="Challenge", y="Acceptance", size="Commitment", color="Construct",
+                         hover_name="Construct", size_max=60, 
+                         title="Community CAC Profile (Bubble Size = Commitment)")
+st.plotly_chart(fig_scatter, use_container_width=True)
 
 st.markdown("---")
 
-# Policy Insights & Recommendations
+# Policy Insights
 st.subheader("Policy Insights & Recommendations for LGU & Superintendents")
 insights = []
-
 if nodes["Assistance for relocation"].current_score < 40:
-    insights.append("🔴 **Critical Intervention Needed:** 'Assistance for relocation' is perceived as significantly challenging. The LGU must prioritize increasing tangible support (financial, logistical) to improve feasibility and drive relocation desire.")
+    insights.append("🔴 **Critical Intervention Needed:** 'Assistance for relocation' is perceived as significantly challenging. The LGU must prioritize increasing tangible support.")
 if nodes["Fear of housing demolition"].current_score > 60:
-    insights.append("🟠 **Warning - High Resistance Risk:** 'Fear of housing demolition' is elevated. This is actively driving resistance and negatively impacting coping mechanisms. The LGU should immediately initiate clear communication campaigns and issue housing security guarantees.")
+    insights.append("🟠 **Warning - High Resistance Risk:** 'Fear of housing demolition' is elevated. The LGU should immediately initiate clear communication campaigns and issue housing security guarantees.")
 if nodes["Viewpoints towards LGU"].current_score < 40:
-    insights.append("🟡 **Trust Deficit:** 'Viewpoints towards LGU' are low. Policy transparency and community engagement must be improved, as LGU trust is a primary predictor of relocation assistance success.")
-if nodes["Desire for relocation"].current_score > 60 and nodes["Feasibility of relocation"].current_score < 40:
-    insights.append("🟢 **Opportunity for Action:** There is a high 'Desire for relocation' but low 'Feasibility'. The community wants to move but feels blocked. Removing practical barriers (e.g., transport, paperwork) will yield immediate relocation results.")
-
+    insights.append("🟡 **Trust Deficit:** 'Viewpoints towards LGU' are low. Policy transparency and community engagement must be improved.")
 if not insights:
-    insights.append("🟢 **Status Nominal:** The community shows a balanced psychological state. Continue current engagement strategies, monitor the 12 constructs for shifts, and maintain open dialogue with barangay leaders.")
-
+    insights.append("🟢 **Status Nominal:** The community shows a balanced psychological state. Continue current engagement strategies.")
 for insight in insights:
     st.markdown(insight)
 
@@ -569,12 +621,9 @@ st.subheader("Simulation Timeline")
 if len(st.session_state.history) > 1:
     hist_df = pd.DataFrame(st.session_state.history)
     hist_df['Step'] = range(len(hist_df))
-    
     cols_to_plot = ['Projected to Relocate (%)', 'Evacuating (%)', 'Resisting LGU (%)']
     hist_df_melted = hist_df.melt(id_vars=['Step'], value_vars=cols_to_plot, var_name='Metric', value_name='Percentage')
-    
-    fig_time = px.line(hist_df_melted, x='Step', y='Percentage', color='Metric',
-                       title='Macro-Metrics Over Time Steps', markers=True)
+    fig_time = px.line(hist_df_melted, x='Step', y='Percentage', color='Metric', title='Macro-Metrics Over Time Steps', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
 else:
     st.info("Click **'Run 1 Step'** or **'Run 10 Steps'** in the sidebar to see how interventions ripple through the community over time.")
