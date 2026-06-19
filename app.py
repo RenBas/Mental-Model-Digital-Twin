@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import networkx as nx
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
-import io
 
 # ==============================================================================
 # LAYER 1: THE MATHEMATICAL ENGINE (System Dynamics)
@@ -63,7 +62,7 @@ class ResidentAgent:
     def __init__(self, agent_id, cluster_name, node_states, archetype):
         self.agent_id = agent_id
         self.cluster_name = cluster_name
-        self.node_states = node_states
+        self.node_states = node_states  # Holds the 12 macro scores for decision making
         self.archetype = archetype
         self.has_relocated = False
         self.will_evacuate = False
@@ -101,7 +100,8 @@ class ClusterArchetype:
     def __init__(self, name, population_ratio, node_baseline_scores, relocation_threshold=65.0, resistance_threshold=65.0):
         self.name = name
         self.population_ratio = population_ratio
-        self.node_baseline_scores = node_baseline_scores
+        # This now holds the 36 CAC variables if calibrated via CSV, or 12 macro variables if mock
+        self.node_baseline_scores = node_baseline_scores 
         self.relocation_threshold = relocation_threshold
         self.resistance_threshold = resistance_threshold
 
@@ -109,6 +109,22 @@ class PopulationGenerator:
     def __init__(self, nodes_dict):
         self.nodes_dict = nodes_dict
         self.node_names = list(nodes_dict.keys())
+        
+        # Mapping for clean CSV column names
+        self.col_map = {
+            "Prevention and flooding": "Prevention_flooding",
+            "Coping during flooding": "Coping_flooding",
+            "Flooding and Family": "Flooding_Family",
+            "Desire for relocation": "Desire_relocation",
+            "Preference and adaptation": "Preference_adaptation",
+            "Feasibility of relocation": "Feasibility_relocation",
+            "Fear of housing demolition": "Fear_demolition",
+            "Viewpoints towards LGU": "Viewpoints_LGU",
+            "Assistance for relocation": "Assistance_relocation",
+            "Rights to live in the area": "Rights_live_area",
+            "Living in the disaster area": "Living_disaster_area",
+            "Family history and identity": "Family_history_identity"
+        }
         
     def generate_population(self, total_population_size, cluster_profiles):
         agents = []
@@ -127,14 +143,40 @@ class PopulationGenerator:
 
         for name, profile in cluster_profiles.items():
             for _ in range(cluster_counts[name]):
-                individual_states = {}
-                for node_name in self.node_names:
-                    baseline = profile.node_baseline_scores.get(node_name, 50.0)
-                    macro_deviation = self.nodes_dict[node_name].current_score - 50.0
-                    noise = np.random.normal(0, 5.0)
-                    individual_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
+                individual_cac_states = {}
+                agent_macro_states = {}
                 
-                agents.append(ResidentAgent(current_agent_id, name, individual_states, profile))
+                # Check if the cluster profile has the 36 CAC variables (from CSV upload)
+                is_cac_profile = any("_Challenge" in k for k in profile.node_baseline_scores.keys())
+                
+                if is_cac_profile:
+                    # Generate the 36 micro-variables with noise
+                    for node_name, clean_name in self.col_map.items():
+                        for cac in ['Challenge', 'Acceptance', 'Commitment']:
+                            key = f"{clean_name}_{cac}"
+                            baseline = profile.node_baseline_scores.get(key, 33.3)
+                            noise = np.random.normal(0, 5.0)
+                            individual_cac_states[key] = max(0.0, min(100.0, baseline + noise))
+                            
+                    # Aggregate the 36 micro-variables into the 12 macro-nodes for decision making
+                    # Macro Score = Acceptance + Commitment (which equals 100 - Challenge)
+                    for node_name, clean_name in self.col_map.items():
+                        ac_val = individual_cac_states.get(f"{clean_name}_Acceptance", 33.3)
+                        co_val = individual_cac_states.get(f"{clean_name}_Commitment", 33.3)
+                        macro_base = ac_val + co_val
+                        
+                        macro_deviation = self.nodes_dict[node_name].current_score - 50.0
+                        noise = np.random.normal(0, 3.0)
+                        agent_macro_states[node_name] = max(0.0, min(100.0, macro_base + macro_deviation + noise))
+                else:
+                    # Fallback for mock data (12 macro variables)
+                    for node_name in self.node_names:
+                        baseline = profile.node_baseline_scores.get(node_name, 50.0)
+                        macro_deviation = self.nodes_dict[node_name].current_score - 50.0
+                        noise = np.random.normal(0, 5.0)
+                        agent_macro_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
+                
+                agents.append(ResidentAgent(current_agent_id, name, agent_macro_states, profile))
                 current_agent_id += 1
         return agents
 
@@ -224,7 +266,22 @@ def initialize_model():
 
 nodes, edges = initialize_model()
 
-# Generate Mock Clusters (Fallback if no CSV is uploaded)
+# Column mapping for CSV generation
+col_map = {
+    "Prevention and flooding": "Prevention_flooding",
+    "Coping during flooding": "Coping_flooding",
+    "Flooding and Family": "Flooding_Family",
+    "Desire for relocation": "Desire_relocation",
+    "Preference and adaptation": "Preference_adaptation",
+    "Feasibility of relocation": "Feasibility_relocation",
+    "Fear of housing demolition": "Fear_demolition",
+    "Viewpoints towards LGU": "Viewpoints_LGU",
+    "Assistance for relocation": "Assistance_relocation",
+    "Rights to live in the area": "Rights_live_area",
+    "Living in the disaster area": "Living_disaster_area",
+    "Family history and identity": "Family_history_identity"
+}
+
 def get_mock_clusters():
     return {
         "Resilient Adapters": ClusterArchetype("Resilient Adapters", 0.45, {n: 65.0 for n in nodes.keys()}, 55.0, 80.0),
@@ -232,7 +289,6 @@ def get_mock_clusters():
         "Pragmatic Waiters": ClusterArchetype("Pragmatic Waiters", 0.25, {n: 50.0 for n in nodes.keys()}, 65.0, 65.0)
     }
 
-# Initialize Session State
 if 'engine' not in st.session_state:
     st.session_state.engine = SimulationEngine(nodes, edges, damping_factor=0.5)
     st.session_state.generator = PopulationGenerator(nodes)
@@ -262,24 +318,25 @@ with st.sidebar:
     ])
     
     st.markdown("---")
-    st.header("📊 Data Upload & Calibration")
+    st.header("📊 Data Upload & Calibration (36 CAC Variables)")
     
-    # Create CSV Template for Download
-    template_data = {
-        'Respondent_Name': ['Juan Dela Cruz', 'Maria Santos'],
-        'Barangay_Name': ['Sitio Dal-og', 'Sitio Dal-og']
-    }
-    for node in nodes.keys():
-        template_data[node] = [50, 60] # Dummy values
+    # 1. Generate the 38-column CSV Template
+    cac_vars = ['Challenge', 'Acceptance', 'Commitment']
+    csv_columns = ['Respondent_Name', 'Barangay_Name']
+    for node, clean_name in col_map.items():
+        for cac in cac_vars:
+            csv_columns.append(f"{clean_name}_{cac}")
+            
+    template_data = {col: ['Sample Name', 'Sample Barangay'] if col in ['Respondent_Name', 'Barangay_Name'] else [50, 60] for col in csv_columns}
     df_template = pd.DataFrame(template_data)
     csv_template = df_template.to_csv(index=False).encode('utf-8')
     
     st.download_button(
-        label="📥 Download CSV Template",
+        label="📥 Download True CAC CSV Template (38 Columns)",
         data=csv_template,
-        file_name='twin_data_template.csv',
+        file_name='twin_cac_data_template.csv',
         mime='text/csv',
-        help="Download this template, fill it with your survey data, and upload it below."
+        help="Downloads the exact template with Name, Barangay, and 36 CAC variables."
     )
 
     uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
@@ -287,23 +344,27 @@ with st.sidebar:
     if uploaded_file is not None:
         try:
             df_raw = pd.read_csv(uploaded_file)
-            required_cols = ['Respondent_Name', 'Barangay_Name'] + list(nodes.keys())
             
-            if not all(col in df_raw.columns for col in required_cols):
-                st.error("❌ Error: CSV is missing required columns. Please use the template.")
+            # Validate columns
+            missing_cols = [col for col in csv_columns if col not in df_raw.columns]
+            if missing_cols:
+                st.error(f"❌ Error: CSV is missing columns. Please use the exact template. Missing: {missing_cols[:3]}...")
             else:
-                st.success(f"✅ Loaded data for {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
+                st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
+                st.info(f"📊 Analyzing {len(csv_columns) - 2} socio-psychological variables (CAC Framework).")
                 
                 n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3, 
-                                       help="How many distinct socio-psychological profiles to extract from your data.")
+                                       help="How many distinct socio-psychological profiles to extract.")
                 
-                if st.button("🔄 Recalibrate Model with Uploaded Data", use_container_width=True):
-                    with st.spinner("Running K-Means Clustering..."):
-                        df_numeric = df_raw[list(nodes.keys())]
+                if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
+                    with st.spinner("Running K-Means on 36 CAC dimensions..."):
+                        # Extract only the 36 numeric CAC columns
+                        numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
+                        df_numeric = df_raw[numeric_cols]
                         
-                        # Scale data to 0-100 to match the mental model baseline
+                        # Scale data to 0-100
                         scaler = MinMaxScaler(feature_range=(0, 100))
-                        df_scaled = pd.DataFrame(scaler.fit_transform(df_numeric), columns=df_numeric.columns)
+                        df_scaled = pd.DataFrame(scaler.fit_transform(df_numeric), columns=numeric_cols)
                         
                         # Run K-Means
                         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
@@ -314,25 +375,25 @@ with st.sidebar:
                         for i in range(n_clusters):
                             cluster_data = df_scaled[df_scaled['Cluster'] == i]
                             ratio = len(cluster_data) / len(df_scaled)
-                            centroids = cluster_data[list(nodes.keys())].mean().to_dict()
+                            centroids = cluster_data[numeric_cols].mean().to_dict()
                             
                             name = f"Profile {i+1}"
                             new_profiles[name] = ClusterArchetype(
                                 name=name,
                                 population_ratio=ratio,
-                                node_baseline_scores=centroids,
+                                node_baseline_scores=centroids, # Holds the 36 keys!
                                 relocation_threshold=65.0, 
                                 resistance_threshold=65.0
                             )
                         
                         st.session_state.cluster_profiles = new_profiles
                         st.session_state.data_calibrated = True
-                        st.success("Model successfully recalibrated with real data!")
+                        st.success("Model successfully recalibrated with true 36-variable CAC data!")
                         st.rerun()
         except Exception as e:
             st.error(f"Error reading file: {e}")
     else:
-        st.info("📝 Using mock data. Upload CSV to calibrate with real survey data.")
+        st.info("📝 Using mock data. Upload the 38-column CSV to calibrate with real CAC survey data.")
 
     st.markdown("---")
     st.header("1. Simulation Controls")
@@ -455,13 +516,12 @@ with col_right:
 
 st.markdown("---")
 
-# ROW 3: TIMELINE (With Plotly Express Fix)
+# ROW 3: TIMELINE
 st.subheader("Simulation Timeline")
 if len(st.session_state.history) > 1:
     hist_df = pd.DataFrame(st.session_state.history)
     hist_df['Step'] = range(len(hist_df))
     
-    # FIX: Melt the dataframe to a "long" format which Plotly Express requires
     cols_to_plot = ['Relocated (%)', 'Evacuating (%)', 'Resisting LGU (%)']
     hist_df_melted = hist_df.melt(id_vars=['Step'], value_vars=cols_to_plot, var_name='Metric', value_name='Percentage')
     
