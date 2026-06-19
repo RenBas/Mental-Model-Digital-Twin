@@ -20,7 +20,6 @@ class MentalModelNode:
         self.previous_delta = 0.0
 
 class MentalModelEdge:
-    # FIX 5: Added r_square to the Edge class
     def __init__(self, source_name, target_name, coefficient, r_square, nodes_dict):
         self.source_name = source_name
         self.target_name = target_name
@@ -60,9 +59,8 @@ class ResidentAgent:
         self.agent_id = agent_id
         self.cluster_name = cluster_name
         self.node_states = node_states  
-        self.cac_states = cac_states  # FIX 4: Store the 36 CAC variables for scatter plotting
+        self.cac_states = cac_states  
         self.archetype = archetype
-        # FIX 1 & 2: Start all behavioral flags as False (Zero)
         self.has_relocated = False
         self.will_evacuate = False
         self.is_adapting_in_place = False
@@ -103,29 +101,57 @@ class ClusterArchetype:
         self.relocation_threshold = relocation_threshold
         self.resistance_threshold = resistance_threshold
 
-# FIX 3: Nomenclature Generator for LGU-friendly cluster names
+# ==============================================================================
+# REALISTIC K-MEANS NOMENCLATURE ENGINE
+# ==============================================================================
 def generate_lgu_cluster_name(centroids, col_map):
-    macro_scores = {}
-    for node, clean in col_map.items():
-        ac = centroids.get(f"{clean}_Acceptance", 0)
-        co = centroids.get(f"{clean}_Commitment", 0)
-        macro_scores[node] = ac + co
+    """
+    Interprets the 36 CAC variables to assign a realistic, sociologically 
+    meaningful nomenclature to the K-Means cluster.
+    """
+    # Helper to calculate Action Readiness (Average of Acceptance & Commitment)
+    def get_action_score(node_clean):
+        ac = centroids.get(f"{node_clean}_Acceptance", 0)
+        co = centroids.get(f"{node_clean}_Commitment", 0)
+        return (ac + co) / 2
     
-    sorted_nodes = sorted(macro_scores.items(), key=lambda x: x[1], reverse=True)
-    top1 = sorted_nodes[0][0]
+    # Helper to get Challenge/Friction score
+    def get_challenge_score(node_clean):
+        return centroids.get(f"{node_clean}_Challenge", 0)
+
+    # 1. Calculate Relocation Action Readiness
+    relocation_desire = get_action_score("Desire_relocation")
+    relocation_feasibility = get_action_score("Feasibility_relocation")
+    assistance_action = get_action_score("Assistance_relocation")
     
-    if "Assistance" in top1 or "Feasibility" in top1:
-        return "Resource-Ready Relocators"
-    elif "Fear" in top1 or "Rights" in top1:
-        return "Rights-Asserting Resisters"
-    elif "Coping" in top1 or "Prevention" in top1:
-        return "Proactive Adapters"
-    elif "Family" in top1 or "Identity" in top1:
-        return "Heritage-Bound Residents"
-    elif "Desire" in top1 or "Preference" in top1:
-        return "Transition-Seeking Residents"
+    # 2. Calculate Friction & Resistance (High Challenge in key areas)
+    fear_challenge = get_challenge_score("Fear_demolition")
+    rights_challenge = get_challenge_score("Rights_live_area")
+    lgu_challenge = get_challenge_score("Viewpoints_LGU")
+    family_challenge = get_challenge_score("Family_history_identity")
+    
+    # 3. Calculate Coping & Prevention Capacity
+    coping_action = get_action_score("Coping_flooding")
+    prevention_action = get_action_score("Prevention_flooding")
+    
+    # Aggregate Scores
+    overall_action = (relocation_desire + relocation_feasibility + assistance_action) / 3
+    overall_friction = (fear_challenge + rights_challenge + lgu_challenge + family_challenge) / 4
+    overall_coping = (coping_action + prevention_action) / 2
+
+    # Interpretation Logic for Nomenclature
+    if overall_coping > 55 and overall_action < 40:
+        return "Self-Reliant Adapters" # High coping/prevention, but low desire to relocate
+    elif overall_friction > 45 and fear_challenge > 40:
+        return "Rights-Asserting Resisters" # High fear of demolition and strong assertion of rights
+    elif family_challenge > 45 and overall_action < 45:
+        return "Heritage-Bound Residents" # High challenge in leaving family history/identity behind
+    elif overall_action > 55 and overall_friction < 35:
+        return "Proactive Transition Seekers" # High desire/feasibility, low friction/fear
+    elif relocation_desire > 45 and (get_challenge_score("Feasibility_relocation") > 45 or get_challenge_score("Assistance_relocation") > 45):
+        return "Resource-Constrained Pragmatists" # Want to move, but see high challenges in assistance/feasibility
     else:
-        return "Balanced Community Segment"
+        return "Balanced Community Segment" # No extreme dominant traits
 
 class PopulationGenerator:
     def __init__(self, nodes_dict):
@@ -183,12 +209,10 @@ class PopulationGenerator:
                         macro_deviation = self.nodes_dict[node_name].current_score - 50.0
                         noise = np.random.normal(0, 5.0)
                         agent_macro_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
-                        # Fallback CAC for mock data
                         individual_cac_states[f"{self.col_map[node_name]}_Challenge"] = 33.3
                         individual_cac_states[f"{self.col_map[node_name]}_Acceptance"] = 33.3
                         individual_cac_states[f"{self.col_map[node_name]}_Commitment"] = 33.3
                 
-                # Pass both macro and CAC states to the agent
                 agents.append(ResidentAgent(current_agent_id, name, agent_macro_states, individual_cac_states, profile))
                 current_agent_id += 1
         return agents
@@ -230,13 +254,12 @@ class CommunityAnalytics:
         cluster_stats['Population Count'] = self.df['Cluster'].value_counts()
         return cluster_stats.reset_index()
 
-    # FIX 4: Calculate actual CAC averages from the agents for the scatter plot
     def get_cac_averages(self, col_map):
         cac_avgs = {}
         for node, clean in col_map.items():
             for cac in ['Challenge', 'Acceptance', 'Commitment']:
                 key = f"{clean}_{cac}"
-                vals = [agent.cac_states.get(key, 0) for agent in self.agents]
+                vals = [getattr(agent, 'cac_states', {}).get(key, 0) for agent in self.agents]
                 cac_avgs[f"{node} ({cac})"] = np.mean(vals) if vals else 0
         return cac_avgs
 
@@ -264,7 +287,6 @@ def initialize_model():
     }
     nodes = {name: MentalModelNode(name, *vals) for name, vals in nodes_data.items()}
     
-    # FIX 5: Added R-Square values to the edge data
     edge_data = [
         ("Prevention and flooding", "Living in the disaster area", 0.715, 0.502),
         ("Coping during flooding", "Prevention and flooding", 1.003, 0.692),
@@ -363,7 +385,7 @@ with st.sidebar:
                 n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3)
                 
                 if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
-                    with st.spinner("Running K-Means on 36 CAC dimensions..."):
+                    with st.spinner("Running K-Means & Interpreting Profiles..."):
                         numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
                         df_numeric = df_raw[numeric_cols]
                         scaler = MinMaxScaler(feature_range=(0, 100))
@@ -377,12 +399,11 @@ with st.sidebar:
                             ratio = len(cluster_data) / len(df_scaled)
                             centroids = cluster_data[numeric_cols].mean().to_dict()
                             
-                            # FIX 3: Generate LGU-friendly name
+                            # Generate realistic nomenclature based on CAC interpretation
                             lgu_name = generate_lgu_cluster_name(centroids, col_map)
-                            name = f"{lgu_name} (Profile {i+1})"
                             
-                            new_profiles[name] = ClusterArchetype(
-                                name=name, population_ratio=ratio, node_baseline_scores=centroids,
+                            new_profiles[lgu_name] = ClusterArchetype(
+                                name=lgu_name, population_ratio=ratio, node_baseline_scores=centroids,
                                 relocation_threshold=45.0, resistance_threshold=50.0
                             )
                         
@@ -390,11 +411,9 @@ with st.sidebar:
                         st.session_state.data_calibrated = True
                         st.session_state.uploaded_pop_size = len(df_raw)
                         
-                        # FIX 1 & 2: Generate agents but DO NOT evaluate decisions yet. 
-                        # This ensures KPIs start at 0% until "Run" is clicked.
                         st.session_state.agents = st.session_state.generator.generate_population(len(df_raw), new_profiles)
                         st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
-                        st.session_state.history = [] # Reset timeline
+                        st.session_state.history = [] 
                         st.session_state.step_count = 0
                         
                         st.success(f"Model recalibrated! Population set to {len(df_raw)}. Click 'Run' to simulate behaviors.")
@@ -404,15 +423,17 @@ with st.sidebar:
     else:
         st.info("📝 Using mock data. Upload the 38-column CSV to calibrate with real CAC survey data.")
 
+    # ==============================================================================
+    # UPDATED SIMULATION CONTROLS (Dropdown + Single Run Button)
+    # ==============================================================================
     st.markdown("---")
     st.header("1. Simulation Controls")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns([1, 2])
     with col1:
         if st.button("Reset", use_container_width=True):
             st.session_state.engine = SimulationEngine(nodes, edges, damping_factor=0.5)
             st.session_state.history = []
             st.session_state.step_count = 0
-            # Reset agent behaviors to 0
             for agent in st.session_state.agents:
                 agent.has_relocated = False
                 agent.will_evacuate = False
@@ -421,18 +442,10 @@ with st.sidebar:
             st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
             st.rerun()
     with col2:
-        if st.button("Run 1 Step", use_container_width=True):
-            st.session_state.engine.step()
-            st.session_state.step_count += 1
-            # FIX 1 & 2: NOW we evaluate decisions
-            for agent in st.session_state.agents:
-                agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
-            st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
-            st.session_state.history.append(st.session_state.analytics.get_behavioral_metrics())
-            st.rerun()
-    with col3:
-        if st.button("Run 10 Steps", use_container_width=True):
-            for _ in range(10):
+        # Dropdown for steps 2 through 10
+        steps_to_run = st.selectbox("Steps to Simulate", [2, 3, 4, 5, 6, 7, 8, 9, 10], index=8)
+        if st.button(f"Run {steps_to_run} Steps", use_container_width=True):
+            for _ in range(steps_to_run):
                 st.session_state.engine.step()
                 st.session_state.step_count += 1
                 for agent in st.session_state.agents:
@@ -460,7 +473,6 @@ with st.sidebar:
 
     if st.button("Apply Settings & Generate Population", use_container_width=True):
         st.session_state.agents = st.session_state.generator.generate_population(pop_size, st.session_state.cluster_profiles)
-        # DO NOT evaluate decisions here either, wait for "Run"
         st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
         st.session_state.history = []
         st.session_state.step_count = 0
@@ -478,7 +490,7 @@ metrics = st.session_state.analytics.get_behavioral_metrics()
 
 # ROW 1: KPI CARDS
 st.subheader("Community Behavioral Outcomes")
-st.caption("*Note: Behaviors start at 0%. Click 'Run 1 Step' or 'Run 10 Steps' in the sidebar to simulate resident decision-making.*")
+st.caption("*Note: Behaviors start at 0%. Use the dropdown and 'Run' button in the sidebar to simulate resident decision-making over time.*")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Population", f"{metrics['Total Population']:,}")
 col2.metric("Projected to Relocate", f"{metrics['Projected to Relocate (%)']:.1f}%")
@@ -540,7 +552,7 @@ with col_right:
 
 st.markdown("---")
 
-# FIX 5: REGRESSION ANALYSIS SECTION
+# REGRESSION ANALYSIS SECTION
 st.subheader("Regression Analysis & Causal Pathways")
 st.info("The statistical backbone of the Digital Twin. These 18 unidirectional pathways dictate how interventions ripple through the community's psychology.")
 reg_data = []
@@ -558,27 +570,27 @@ st.dataframe(df_reg, use_container_width=True, hide_index=True, height=400)
 
 st.markdown("---")
 
-# K-Means Cluster Profiling
+# K-Means Cluster Profiling (Now with Realistic Nomenclature)
 st.subheader("Socio-Psychological Cluster Profiling (K-Means Results)")
 if st.session_state.data_calibrated:
-    st.info("The following profiles were dynamically extracted from your uploaded survey data and assigned LGU-friendly nomenclature.")
+    st.info("The following profiles were dynamically extracted from your uploaded survey data. Nomenclature is interpreted based on the cluster's unique Challenge, Acceptance, and Commitment dynamics.")
     cluster_details = []
     for name, profile in st.session_state.cluster_profiles.items():
         sorted_nodes = sorted(profile.node_baseline_scores.items(), key=lambda x: x[1], reverse=True)
         top_traits = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_nodes[:2]]
         
         cluster_details.append({
-            "LGU Cluster Nomenclature": name,
+            "Interpreted LGU Nomenclature": name,
             "Population Share": f"{profile.population_ratio * 100:.1f}%",
             "Dominant Psychological Traits": " | ".join(top_traits)
         })
     st.dataframe(pd.DataFrame(cluster_details), use_container_width=True, hide_index=True)
 else:
-    st.warning("No real data uploaded. Showing default mock profiles. Upload a CSV and click 'Recalibrate' to see actual K-Means results.")
+    st.warning("No real data uploaded. Showing default mock profiles. Upload a CSV and click 'Recalibrate' to see actual K-Means results with interpreted nomenclature.")
 
 st.markdown("---")
 
-# FIX 4: CAC FRAMEWORK SCATTER PLOT
+# CAC FRAMEWORK SCATTER PLOT
 st.subheader("CAC Framework Breakdown (Challenge, Acceptance, Commitment)")
 st.info("Visualizing the 12 constructs. X-axis: Challenge, Y-axis: Acceptance. Bubble size represents Commitment.")
 
@@ -626,7 +638,7 @@ if len(st.session_state.history) > 1:
     fig_time = px.line(hist_df_melted, x='Step', y='Percentage', color='Metric', title='Macro-Metrics Over Time Steps', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
 else:
-    st.info("Click **'Run 1 Step'** or **'Run 10 Steps'** in the sidebar to see how interventions ripple through the community over time.")
+    st.info(f"Select a number of steps from the dropdown and click **'Run'** in the sidebar to see how interventions ripple through the community over time.")
 
 # Footer
 st.markdown("---")
