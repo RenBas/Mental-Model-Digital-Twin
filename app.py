@@ -427,7 +427,7 @@ if 'twin' not in st.session_state:
         nodes=base_nodes,
         edges=base_edges,
         cluster_profiles=get_mock_clusters(),
-        total_population=140,   # baseline N for Sitio Dal-og
+        total_population=140,
         flood_severity=0.3,
         lgu_threat=False
     )
@@ -469,7 +469,6 @@ with st.sidebar:
                             scaler = MinMaxScaler(feature_range=(0, 100))
                             X_scaled = scaler.fit_transform(df_num)
 
-                            # Auto-determine K via silhouette score
                             best_k = 3
                             best_sil = -1
                             for k in range(2, min(6, len(df_raw))):
@@ -568,10 +567,17 @@ with st.sidebar:
             with col3:
                 new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']),
                                    key=f"{node_name}_co")
-            if (new_ch != node.baseline_cac['Challenge'] or
-                new_ac != node.baseline_cac['Acceptance'] or
-                new_co != node.baseline_cac['Commitment']):
+            # Update the node's CAC values, with fallback for old session objects
+            if hasattr(node, 'update_cac'):
                 node.update_cac(challenge=new_ch, acceptance=new_ac, commitment=new_co)
+            else:
+                # Manual update for older node objects without the method
+                node.baseline_cac['Challenge'] = new_ch
+                node.baseline_cac['Acceptance'] = new_ac
+                node.baseline_cac['Commitment'] = new_co
+                # Recompute current_score using the same formula
+                c, a, co = new_ch, new_ac, new_co
+                node.current_score = max(0.0, min(100.0, (a + co) / 2.0 + (50.0 - c) / 2.0))
 
 # ---------- Main Dashboard ----------
 st.title("Tagoloan Flood-Prone Communities Digital Twin")
