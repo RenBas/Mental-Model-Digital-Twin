@@ -73,7 +73,6 @@ class ResidentAgent:
         prevention = self.node_states.get("Prevention and flooding", 50.0)
         lgu_view = self.node_states.get("Viewpoints towards LGU", 50.0)
         evac_utility = (coping*0.4) + (prevention*0.3) + (lgu_view*0.3)
-        # Higher flood severity lowers the threshold, making evacuation more likely.
         self.will_evacuate = evac_utility >= (50.0 - (flood_severity * 30.0))
 
         preference = self.node_states.get("Preference and adaptation", 50.0)
@@ -419,20 +418,19 @@ def get_mock_clusters():
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
-# ---------- Session State Initialisation ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
         edges=base_edges,
         cluster_profiles=get_mock_clusters(),
         total_population=140,
-        flood_severity=0.0,          # Start with no flood → realistic evacuation variation
+        flood_severity=0.0,
         lgu_threat=False
     )
     st.session_state.data_calibrated = False
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
-    st.session_state.raw_data = None   # Will store the uploaded dataframe
+    st.session_state.raw_data = None
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -450,7 +448,6 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"], key="uploader")
 
-    # If a file is uploaded, store it in session_state so it persists across reruns
     if uploaded_file is not None:
         try:
             df_raw = pd.read_csv(uploaded_file)
@@ -460,17 +457,15 @@ with st.sidebar:
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                st.session_state.raw_data = df_raw   # Save for persistent access
+                st.session_state.raw_data = df_raw
         except Exception as e:
             st.error(f"Error reading file: {e}")
-    # If file uploader lost the file but we have raw_data in session, use it
     if uploaded_file is None and st.session_state.raw_data is not None:
         df_raw = st.session_state.raw_data
         st.info(f"📌 Using previously uploaded data ({len(df_raw)} residents). Re‑upload to replace.")
     elif uploaded_file is None:
         df_raw = None
 
-    # Show barangay selector and recalibrate button whenever we have data
     if df_raw is not None:
         st.subheader("📍 Select Target Barangay")
         barangays = ["All Barangays"] + sorted(df_raw['Barangay_Name'].unique().tolist())
@@ -483,12 +478,11 @@ with st.sidebar:
                 st.warning(f"No data found for {selected_barangay}.")
                 st.stop()
             else:
-                st.info(f"Filtered to {selected_barangay}: {len(df_filtered)} residents.")
+                st.info(f"📌 Analysing **{selected_barangay}** only. Click 'Recalibrate' to update the twin with this barangay's data.")
         else:
             df_filtered = df_raw
-            st.info(f"Using all {len(df_filtered)} residents across {df_raw['Barangay_Name'].nunique()} barangays.")
+            st.info("📌 Analysing **all barangays combined**. Click 'Recalibrate' to update the municipal‑level twin.")
 
-        # ---- K-means mode selector ----
         st.subheader("⚙️ K-Means Cluster Settings")
         k_mode = st.radio(
             "How many clusters should we create?",
@@ -510,7 +504,6 @@ with st.sidebar:
                     scaler = MinMaxScaler(feature_range=(0, 100))
                     X_scaled = scaler.fit_transform(df_num)
 
-                    # Determine K
                     if k_mode == "Auto (silhouette)":
                         best_k = 3
                         best_sil = -1
@@ -524,7 +517,7 @@ with st.sidebar:
                         chosen_k = best_k
                     elif k_mode == "Fixed (3 clusters)":
                         chosen_k = 3
-                    else:  # Manual
+                    else:
                         chosen_k = manual_k
 
                     kmeans = KMeans(n_clusters=chosen_k, random_state=42, n_init=10)
@@ -581,14 +574,18 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("⚙️ Settings")
-    pop_size = st.slider("Total Residents to Simulate", 10, 5000,
-                         st.session_state.twin.total_population,
-                         key="pop_slider",
-                         help="After calibration, this matches the CSV size. Change to project to a larger population.")
-    if pop_size != st.session_state.twin.total_population:
-        if st.button("Apply Population Change"):
-            st.session_state.twin.update_population_size(pop_size)
-            st.rerun()
+
+    new_pop = st.slider(
+        "Total Residents to Simulate",
+        10, 5000,
+        st.session_state.twin.total_population,
+        key="pop_slider",
+        help="Changing this value immediately regenerates the population using the current cluster proportions."
+    )
+    if new_pop != st.session_state.twin.total_population:
+        st.session_state.twin.update_population_size(new_pop)
+        st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
+        st.rerun()
 
     flood_sev = st.slider("Flood Severity (higher → easier to evacuate)", 0.0, 1.0,
                           st.session_state.twin.flood_severity, 0.1)
@@ -602,7 +599,7 @@ with st.sidebar:
     st.header("🎚️ LGU Intervention Sliders")
     st.caption(
         "Adjust the three CAC components directly. Changing them updates the psychological baseline. "
-        "Click **'🧬 Apply Interventions & Rebuild Population'** to instantly see the new behavioral outcomes. "
+        "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes. "
         "You can also use **'▶️ Run'** to watch the transition unfold step by step."
     )
     with st.expander("Expand to modify constructs", expanded=False):
@@ -623,7 +620,7 @@ with st.sidebar:
             node.baseline_cac['Commitment'] = new_co
             node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
 
-    if st.button("🧬 Apply Interventions & Rebuild Population", use_container_width=True):
+    if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True):
         st.session_state.twin.reset()
         st.rerun()
 
@@ -634,6 +631,7 @@ st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 
 twin = st.session_state.twin
 metrics = twin.get_metrics()
+st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{metrics['Total Population']}** residents.")
 
 st.subheader("Community Behavioral Outcomes")
 st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
