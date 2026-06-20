@@ -277,7 +277,6 @@ class DigitalTwin:
         self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
 
     def step(self):
-        # System dynamics
         net_influences = {name: 0.0 for name in self.nodes}
         for target_name, sources in self.incoming_edges.items():
             for source_name, coeff in sources:
@@ -290,7 +289,6 @@ class DigitalTwin:
             node.current_score = max(0.0, min(100.0, node.current_score))
             node.previous_delta = delta
 
-        # Agent coupling
         for agent in self.agents:
             for node_name in self.nodes.keys():
                 base_score = self.nodes[node_name].current_score
@@ -306,7 +304,6 @@ class DigitalTwin:
 
     def reset(self, new_flood_severity=None, new_lgu_threat=None):
         for node in self.nodes.values():
-            # Fallback if node is from an older class without _compute_score
             if hasattr(node, '_compute_score'):
                 node.current_score = node._compute_score()
             else:
@@ -421,7 +418,6 @@ def get_mock_clusters():
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
-# ---------- Session State ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
@@ -553,7 +549,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🎚️ LGU Intervention Sliders")
-    st.caption("Adjust the three CAC components directly. Changing them recalculates the node score instantly.")
+    st.caption(
+        "Adjust the three CAC components directly. Changing them updates the psychological baseline. "
+        "Click **'🧬 Apply Interventions & Rebuild Population'** to instantly see the new behavioral outcomes. "
+        "You can also use **'▶️ Run'** to watch the transition unfold step by step."
+    )
     with st.expander("Expand to modify constructs", expanded=False):
         for node_name, node in st.session_state.twin.nodes.items():
             st.markdown(f"**{node_name}**")
@@ -567,17 +567,15 @@ with st.sidebar:
             with col3:
                 new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']),
                                    key=f"{node_name}_co")
-            # Update the node's CAC values, with fallback for old session objects
-            if hasattr(node, 'update_cac'):
-                node.update_cac(challenge=new_ch, acceptance=new_ac, commitment=new_co)
-            else:
-                # Manual update for older node objects without the method
-                node.baseline_cac['Challenge'] = new_ch
-                node.baseline_cac['Acceptance'] = new_ac
-                node.baseline_cac['Commitment'] = new_co
-                # Recompute current_score using the same formula
-                c, a, co = new_ch, new_ac, new_co
-                node.current_score = max(0.0, min(100.0, (a + co) / 2.0 + (50.0 - c) / 2.0))
+            # Always sync node's CAC and score with slider values
+            node.baseline_cac['Challenge'] = new_ch
+            node.baseline_cac['Acceptance'] = new_ac
+            node.baseline_cac['Commitment'] = new_co
+            node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
+
+    if st.button("🧬 Apply Interventions & Rebuild Population", use_container_width=True):
+        st.session_state.twin.reset()
+        st.rerun()
 
 # ---------- Main Dashboard ----------
 st.title("Tagoloan Flood-Prone Communities Digital Twin")
