@@ -429,6 +429,7 @@ if 'twin' not in st.session_state:
     )
     st.session_state.data_calibrated = False
     st.session_state.respondent_clusters = None
+    st.session_state.current_barangay = "All Barangays"
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -454,20 +455,35 @@ with st.sidebar:
                 st.error(f"❌ Missing columns: {', '.join(missing[:5])}...")
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
-                st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                if len(df_raw) < 3:
+                # ---- Barangay filter ----
+                barangays = ["All Barangays"] + sorted(df_raw['Barangay_Name'].unique().tolist())
+                selected_barangay = st.selectbox("Select Barangay", barangays, key="barangay_filter")
+                st.session_state.current_barangay = selected_barangay
+
+                if selected_barangay != "All Barangays":
+                    df_filtered = df_raw[df_raw['Barangay_Name'] == selected_barangay].copy()
+                    if len(df_filtered) == 0:
+                        st.warning(f"No data found for {selected_barangay}.")
+                        st.stop()
+                    else:
+                        st.info(f"Filtered to {selected_barangay}: {len(df_filtered)} residents.")
+                else:
+                    df_filtered = df_raw
+                    st.info(f"Using all {len(df_filtered)} residents across {df_raw['Barangay_Name'].nunique()} barangays.")
+
+                if len(df_filtered) < 3:
                     st.error("Need at least 3 respondents for clustering.")
                 else:
                     if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
                         with st.spinner("Running K-Means & determining optimal clusters..."):
                             numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
-                            df_num = df_raw[numeric_cols]
+                            df_num = df_filtered[numeric_cols]
                             scaler = MinMaxScaler(feature_range=(0, 100))
                             X_scaled = scaler.fit_transform(df_num)
 
                             best_k = 3
                             best_sil = -1
-                            for k in range(2, min(6, len(df_raw))):
+                            for k in range(2, min(6, len(df_filtered))):
                                 km = KMeans(n_clusters=k, random_state=42, n_init=10)
                                 labels = km.fit_predict(X_scaled)
                                 sil = silhouette_score(X_scaled, labels)
@@ -478,7 +494,7 @@ with st.sidebar:
                             kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
                             final_labels = kmeans.fit_predict(X_scaled)
 
-                            df_labeled = df_raw.copy()
+                            df_labeled = df_filtered.copy()
                             df_labeled['Cluster'] = final_labels
                             st.session_state.respondent_clusters = df_labeled
 
@@ -506,9 +522,9 @@ with st.sidebar:
                                 )
 
                             st.session_state.twin.update_cluster_profiles(new_profiles)
-                            st.session_state.twin.update_population_size(len(df_raw))
+                            st.session_state.twin.update_population_size(len(df_filtered))
                             st.session_state.data_calibrated = True
-                            st.success(f"Model recalibrated! Optimal K = {best_k}, population = {len(df_raw)}. Ready to simulate.")
+                            st.success(f"Model recalibrated! Optimal K = {best_k}, population = {len(df_filtered)}. Ready to simulate.")
                             st.rerun()
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -577,7 +593,8 @@ with st.sidebar:
         st.rerun()
 
 # ---------- Main Dashboard ----------
-st.title("Tagoloan Flood-Prone Communities Digital Twin")
+barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
+st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
 st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 
 twin = st.session_state.twin
@@ -591,7 +608,6 @@ col2.metric("Projected to Relocate", f"{metrics['Projected to Relocate (%)']:.1f
 col3.metric("Evacuating", f"{metrics['Evacuating (%)']:.1f}%")
 col4.metric("Resisting LGU", f"{metrics['Resisting LGU (%)']:.1f}%")
 
-# Interpretation of overall metrics
 reloc = metrics['Projected to Relocate (%)']
 evac = metrics['Evacuating (%)']
 resist = metrics['Resisting LGU (%)']
@@ -648,7 +664,6 @@ fig_net = go.Figure(data=[edge_trace, node_trace],
                                      yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 st.plotly_chart(fig_net, use_container_width=True)
 
-# Interpret the network graph
 high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
 low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
 if high_nodes:
@@ -678,7 +693,6 @@ fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Clu
                           yaxis_title='Percentage', height=450)
 st.plotly_chart(fig_cluster, use_container_width=True)
 
-# Identify clusters with extreme behavior for interpretation
 dominating_clusters = []
 for _, row in cluster_df.iterrows():
     if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 80 or row['Resisting %'] > 30:
@@ -729,7 +743,6 @@ fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
                      size="Commitment", color="Construct", size_max=60,
                      title="Community CAC Profile")
 st.plotly_chart(fig_cac, use_container_width=True)
-# Interpret CAC
 high_challenge = [d['Construct'] for d in scatter if d['Challenge'] > 60]
 low_acceptance = [d['Construct'] for d in scatter if d['Acceptance'] < 40]
 if high_challenge:
@@ -740,7 +753,6 @@ if low_acceptance:
 st.markdown("---")
 st.subheader("Policy Insights & Actionable Recommendations")
 insights = []
-# Directly connect insights to the interpreted data
 if reloc > 30:
     insights.append(f"🔴 **High relocation desire ({reloc:.1f}%):** As highlighted in the network graph, strengthening 'Feasibility of relocation' and 'Assistance for relocation' can accelerate voluntary resettlement. Recommend expanding financial aid and affordable housing options.")
 if evac < 50:
@@ -767,7 +779,6 @@ if len(twin.history) > 1:
     fig_time = px.line(hist_melt, x='Step', y='Percentage', color='Metric',
                        title='Macro-Metrics Over Time', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
-    # Trend interpretation
     recent = hist.tail(3)
     relocate_trend = recent['Projected to Relocate (%)'].diff().mean()
     evac_trend = recent['Evacuating (%)'].diff().mean()
