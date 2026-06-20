@@ -73,6 +73,7 @@ class ResidentAgent:
         prevention = self.node_states.get("Prevention and flooding", 50.0)
         lgu_view = self.node_states.get("Viewpoints towards LGU", 50.0)
         evac_utility = (coping*0.4) + (prevention*0.3) + (lgu_view*0.3)
+        # Higher flood severity lowers the threshold, making evacuation more likely.
         self.will_evacuate = evac_utility >= (50.0 - (flood_severity * 30.0))
 
         preference = self.node_states.get("Preference and adaptation", 50.0)
@@ -418,18 +419,20 @@ def get_mock_clusters():
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
+# ---------- Session State Initialisation ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
         edges=base_edges,
         cluster_profiles=get_mock_clusters(),
         total_population=140,
-        flood_severity=0.3,
+        flood_severity=0.0,          # Start with no flood → realistic evacuation variation
         lgu_threat=False
     )
     st.session_state.data_calibrated = False
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
+    st.session_state.raw_data = None   # Will store the uploaded dataframe
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -447,6 +450,7 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"], key="uploader")
 
+    # If a file is uploaded, store it in session_state so it persists across reruns
     if uploaded_file is not None:
         try:
             df_raw = pd.read_csv(uploaded_file)
@@ -455,79 +459,109 @@ with st.sidebar:
                 st.error(f"❌ Missing columns: {', '.join(missing[:5])}...")
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
-                # ---- Barangay filter ----
-                barangays = ["All Barangays"] + sorted(df_raw['Barangay_Name'].unique().tolist())
-                selected_barangay = st.selectbox("Select Barangay", barangays, key="barangay_filter")
-                st.session_state.current_barangay = selected_barangay
-
-                if selected_barangay != "All Barangays":
-                    df_filtered = df_raw[df_raw['Barangay_Name'] == selected_barangay].copy()
-                    if len(df_filtered) == 0:
-                        st.warning(f"No data found for {selected_barangay}.")
-                        st.stop()
-                    else:
-                        st.info(f"Filtered to {selected_barangay}: {len(df_filtered)} residents.")
-                else:
-                    df_filtered = df_raw
-                    st.info(f"Using all {len(df_filtered)} residents across {df_raw['Barangay_Name'].nunique()} barangays.")
-
-                if len(df_filtered) < 3:
-                    st.error("Need at least 3 respondents for clustering.")
-                else:
-                    if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
-                        with st.spinner("Running K-Means & determining optimal clusters..."):
-                            numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
-                            df_num = df_filtered[numeric_cols]
-                            scaler = MinMaxScaler(feature_range=(0, 100))
-                            X_scaled = scaler.fit_transform(df_num)
-
-                            best_k = 3
-                            best_sil = -1
-                            for k in range(2, min(6, len(df_filtered))):
-                                km = KMeans(n_clusters=k, random_state=42, n_init=10)
-                                labels = km.fit_predict(X_scaled)
-                                sil = silhouette_score(X_scaled, labels)
-                                if sil > best_sil:
-                                    best_sil = sil
-                                    best_k = k
-
-                            kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
-                            final_labels = kmeans.fit_predict(X_scaled)
-
-                            df_labeled = df_filtered.copy()
-                            df_labeled['Cluster'] = final_labels
-                            st.session_state.respondent_clusters = df_labeled
-
-                            df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
-                            df_scaled['Cluster'] = final_labels
-
-                            new_profiles = {}
-                            for i in range(best_k):
-                                cluster_data = df_scaled[df_scaled['Cluster'] == i]
-                                ratio = len(cluster_data) / len(df_scaled)
-                                centroids = cluster_data[numeric_cols].mean().to_dict()
-                                base_name, driver = generate_lgu_cluster_name(centroids, col_map)
-
-                                final_name = base_name
-                                counter = 1
-                                while final_name in new_profiles:
-                                    final_name = f"{base_name} (Segment {counter})"
-                                    counter += 1
-
-                                new_profiles[final_name] = ClusterArchetype(
-                                    name=final_name,
-                                    population_ratio=ratio,
-                                    node_baseline_scores=centroids,
-                                    dominant_driver=driver
-                                )
-
-                            st.session_state.twin.update_cluster_profiles(new_profiles)
-                            st.session_state.twin.update_population_size(len(df_filtered))
-                            st.session_state.data_calibrated = True
-                            st.success(f"Model recalibrated! Optimal K = {best_k}, population = {len(df_filtered)}. Ready to simulate.")
-                            st.rerun()
+                st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
+                st.session_state.raw_data = df_raw   # Save for persistent access
         except Exception as e:
             st.error(f"Error reading file: {e}")
+    # If file uploader lost the file but we have raw_data in session, use it
+    if uploaded_file is None and st.session_state.raw_data is not None:
+        df_raw = st.session_state.raw_data
+        st.info(f"📌 Using previously uploaded data ({len(df_raw)} residents). Re‑upload to replace.")
+    elif uploaded_file is None:
+        df_raw = None
+
+    # Show barangay selector and recalibrate button whenever we have data
+    if df_raw is not None:
+        st.subheader("📍 Select Target Barangay")
+        barangays = ["All Barangays"] + sorted(df_raw['Barangay_Name'].unique().tolist())
+        selected_barangay = st.selectbox("Choose a barangay to focus on", barangays, key="barangay_filter")
+        st.session_state.current_barangay = selected_barangay
+
+        if selected_barangay != "All Barangays":
+            df_filtered = df_raw[df_raw['Barangay_Name'] == selected_barangay].copy()
+            if len(df_filtered) == 0:
+                st.warning(f"No data found for {selected_barangay}.")
+                st.stop()
+            else:
+                st.info(f"Filtered to {selected_barangay}: {len(df_filtered)} residents.")
+        else:
+            df_filtered = df_raw
+            st.info(f"Using all {len(df_filtered)} residents across {df_raw['Barangay_Name'].nunique()} barangays.")
+
+        # ---- K-means mode selector ----
+        st.subheader("⚙️ K-Means Cluster Settings")
+        k_mode = st.radio(
+            "How many clusters should we create?",
+            ["Auto (silhouette)", "Fixed (3 clusters)", "Manual"],
+            index=0,
+            key="k_mode"
+        )
+        manual_k = None
+        if k_mode == "Manual":
+            manual_k = st.slider("Number of clusters (K)", 2, 5, 3, key="manual_k_slider")
+
+        if len(df_filtered) < 3:
+            st.error("Need at least 3 respondents for clustering.")
+        else:
+            if st.button("🔄 Recalibrate Model with Selected Data", use_container_width=True):
+                with st.spinner("Running K-Means..."):
+                    numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
+                    df_num = df_filtered[numeric_cols]
+                    scaler = MinMaxScaler(feature_range=(0, 100))
+                    X_scaled = scaler.fit_transform(df_num)
+
+                    # Determine K
+                    if k_mode == "Auto (silhouette)":
+                        best_k = 3
+                        best_sil = -1
+                        for k in range(2, min(6, len(df_filtered))):
+                            km = KMeans(n_clusters=k, random_state=42, n_init=10)
+                            labels = km.fit_predict(X_scaled)
+                            sil = silhouette_score(X_scaled, labels)
+                            if sil > best_sil:
+                                best_sil = sil
+                                best_k = k
+                        chosen_k = best_k
+                    elif k_mode == "Fixed (3 clusters)":
+                        chosen_k = 3
+                    else:  # Manual
+                        chosen_k = manual_k
+
+                    kmeans = KMeans(n_clusters=chosen_k, random_state=42, n_init=10)
+                    final_labels = kmeans.fit_predict(X_scaled)
+
+                    df_labeled = df_filtered.copy()
+                    df_labeled['Cluster'] = final_labels
+                    st.session_state.respondent_clusters = df_labeled
+
+                    df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
+                    df_scaled['Cluster'] = final_labels
+
+                    new_profiles = {}
+                    for i in range(chosen_k):
+                        cluster_data = df_scaled[df_scaled['Cluster'] == i]
+                        ratio = len(cluster_data) / len(df_scaled)
+                        centroids = cluster_data[numeric_cols].mean().to_dict()
+                        base_name, driver = generate_lgu_cluster_name(centroids, col_map)
+
+                        final_name = base_name
+                        counter = 1
+                        while final_name in new_profiles:
+                            final_name = f"{base_name} (Segment {counter})"
+                            counter += 1
+
+                        new_profiles[final_name] = ClusterArchetype(
+                            name=final_name,
+                            population_ratio=ratio,
+                            node_baseline_scores=centroids,
+                            dominant_driver=driver
+                        )
+
+                    st.session_state.twin.update_cluster_profiles(new_profiles)
+                    st.session_state.twin.update_population_size(len(df_filtered))
+                    st.session_state.data_calibrated = True
+                    st.success(f"Model recalibrated! K = {chosen_k}, population = {len(df_filtered)}. Ready to simulate.")
+                    st.rerun()
     else:
         st.info("📝 Using mock data (N=140). Upload a 38‑column CSV to calibrate with real survey data.")
 
@@ -556,7 +590,8 @@ with st.sidebar:
             st.session_state.twin.update_population_size(pop_size)
             st.rerun()
 
-    flood_sev = st.slider("Flood Severity", 0.0, 1.0, st.session_state.twin.flood_severity, 0.1)
+    flood_sev = st.slider("Flood Severity (higher → easier to evacuate)", 0.0, 1.0,
+                          st.session_state.twin.flood_severity, 0.1)
     lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
     if flood_sev != st.session_state.twin.flood_severity or lgu_threat != st.session_state.twin.lgu_threat:
         if st.button("Apply Environmental Triggers"):
