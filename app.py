@@ -567,7 +567,6 @@ with st.sidebar:
             with col3:
                 new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']),
                                    key=f"{node_name}_co")
-            # Always sync node's CAC and score with slider values
             node.baseline_cac['Challenge'] = new_ch
             node.baseline_cac['Acceptance'] = new_ac
             node.baseline_cac['Commitment'] = new_co
@@ -591,6 +590,28 @@ col1.metric("Total Population", f"{metrics['Total Population']:,}")
 col2.metric("Projected to Relocate", f"{metrics['Projected to Relocate (%)']:.1f}%")
 col3.metric("Evacuating", f"{metrics['Evacuating (%)']:.1f}%")
 col4.metric("Resisting LGU", f"{metrics['Resisting LGU (%)']:.1f}%")
+
+# Interpretation of overall metrics
+reloc = metrics['Projected to Relocate (%)']
+evac = metrics['Evacuating (%)']
+resist = metrics['Resisting LGU (%)']
+if reloc > 30:
+    reloc_msg = f"A high relocation projection ({reloc:.1f}%) signals strong desire or feasibility for moving."
+elif reloc > 10:
+    reloc_msg = f"A moderate relocation projection ({reloc:.1f}%) suggests some openness to resettlement."
+else:
+    reloc_msg = f"A low relocation projection ({reloc:.1f}%) indicates most residents prefer to stay in place."
+if evac > 70:
+    evac_msg = f"High evacuation readiness ({evac:.1f}%) means the community is likely to respond to warnings."
+elif evac > 40:
+    evac_msg = f"Moderate evacuation readiness ({evac:.1f}%) may require reinforcement of early warning systems."
+else:
+    evac_msg = f"Low evacuation readiness ({evac:.1f}%) highlights a critical gap in disaster preparedness."
+if resist > 20:
+    resist_msg = f"Elevated resistance ({resist:.1f}%) points to friction between residents and LGU, especially if demolition is threatened."
+else:
+    resist_msg = f"Low resistance ({resist:.1f}%) suggests the community is receptive to LGU initiatives."
+st.caption(f"📊 **Snapshot:** {reloc_msg} {evac_msg} {resist_msg}")
 
 st.markdown("---")
 
@@ -626,7 +647,14 @@ fig_net = go.Figure(data=[edge_trace, node_trace],
                                      xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                                      yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 st.plotly_chart(fig_net, use_container_width=True)
-st.caption("🎨 Node colors: yellow (low) → purple (high).")
+
+# Interpret the network graph
+high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
+low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
+if high_nodes:
+    st.caption(f"🔵 **Strong psychological drivers:** {', '.join(high_nodes)} show high intensity, which can be leveraged for positive behavioral change.")
+if low_nodes:
+    st.caption(f"🟡 **Weak areas:** {', '.join(low_nodes)} are psychologically fragile; interventions here may have the greatest impact.")
 
 st.markdown("---")
 
@@ -649,6 +677,14 @@ for i, beh in enumerate(behaviors):
 fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Cluster',
                           yaxis_title='Percentage', height=450)
 st.plotly_chart(fig_cluster, use_container_width=True)
+
+# Identify clusters with extreme behavior for interpretation
+dominating_clusters = []
+for _, row in cluster_df.iterrows():
+    if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 80 or row['Resisting %'] > 30:
+        dominating_clusters.append(row['Cluster'])
+if dominating_clusters:
+    st.caption(f"🔍 **Clusters driving overall metrics:** {', '.join(dominating_clusters)} have notably high behavioral percentages. Targeting these groups can shift aggregate outcomes significantly.")
 
 st.markdown("**Cluster populations:**")
 pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
@@ -693,28 +729,30 @@ fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
                      size="Commitment", color="Construct", size_max=60,
                      title="Community CAC Profile")
 st.plotly_chart(fig_cac, use_container_width=True)
-st.caption(
-    "ℹ️ The intervention sliders set the **baseline CAC values for each psychological construct**, "
-    "which directly determine the node's current score. The bubble chart shows the **average CAC components "
-    "across the entire agent population** (including cluster‑specific profiles and individual noise), "
-    "so the numbers may differ from the sliders. This chart reflects the community's aggregated psychological state."
-)
+# Interpret CAC
+high_challenge = [d['Construct'] for d in scatter if d['Challenge'] > 60]
+low_acceptance = [d['Construct'] for d in scatter if d['Acceptance'] < 40]
+if high_challenge:
+    st.caption(f"🔴 **High Challenge constructs:** {', '.join(high_challenge)} – residents perceive significant barriers, requiring policy support to lower perceived difficulty.")
+if low_acceptance:
+    st.caption(f"🟠 **Low Acceptance constructs:** {', '.join(low_acceptance)} – these areas lack community buy‑in; awareness campaigns or incentives may be needed.")
 
 st.markdown("---")
 st.subheader("Policy Insights & Actionable Recommendations")
 insights = []
-if metrics['Projected to Relocate (%)'] > 30:
-    insights.append("🔴 **High relocation desire** – Consider expanding resettlement and financial assistance programs.")
-if metrics['Evacuating (%)'] < 50:
-    insights.append("🟠 **Low evacuation readiness** – Strengthen early warning systems and conduct drills.")
-if metrics['Resisting LGU (%)'] > 20:
-    insights.append("🟡 **Significant LGU resistance** – Improve transparency and dialogue with affected clusters.")
+# Directly connect insights to the interpreted data
+if reloc > 30:
+    insights.append(f"🔴 **High relocation desire ({reloc:.1f}%):** As highlighted in the network graph, strengthening 'Feasibility of relocation' and 'Assistance for relocation' can accelerate voluntary resettlement. Recommend expanding financial aid and affordable housing options.")
+if evac < 50:
+    insights.append(f"🟠 **Low evacuation readiness ({evac:.1f}%):** The cluster breakdown indicates which groups are most reluctant; targeted drills and clear communication channels should be prioritised for those clusters.")
+if resist > 20:
+    insights.append(f"🟡 **Significant LGU resistance ({resist:.1f}%):** The dominance of 'Fear of housing demolition' in the network suggests that issuing formal housing tenure guarantees can reduce resistance.")
 if twin.nodes["Fear of housing demolition"].current_score > 60:
-    insights.append("⚠️ **Elevated fear of demolition** – Issue clear housing security guarantees.")
+    insights.append("⚠️ **Elevated fear of demolition** – As seen in the CAC profile, this construct is a major psychological barrier. Immediate policy communication and a moratorium on demolition threats can ease anxiety.")
 if twin.nodes["Viewpoints towards LGU"].current_score < 40:
-    insights.append("⚠️ **Low LGU trust** – Implement visible community projects and participatory planning.")
+    insights.append("⚠️ **Low LGU trust** – Trust‑building through transparent community projects is essential, especially among clusters with high resistance.")
 if not insights:
-    insights.append("✅ **Community resilience is stable** – Maintain current engagement and monitoring.")
+    insights.append("✅ **Community resilience is stable** – Continue monitoring and maintain current engagement strategies.")
 for ins in insights:
     st.markdown(ins)
 
@@ -729,6 +767,21 @@ if len(twin.history) > 1:
     fig_time = px.line(hist_melt, x='Step', y='Percentage', color='Metric',
                        title='Macro-Metrics Over Time', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
+    # Trend interpretation
+    recent = hist.tail(3)
+    relocate_trend = recent['Projected to Relocate (%)'].diff().mean()
+    evac_trend = recent['Evacuating (%)'].diff().mean()
+    resist_trend = recent['Resisting LGU (%)'].diff().mean()
+    if relocate_trend > 0.5:
+        st.caption("📈 Relocation is trending upward – if this continues, resettlement demand may exceed current capacity.")
+    elif relocate_trend < -0.5:
+        st.caption("📉 Relocation is declining, suggesting that interventions are reducing the desire to leave.")
+    if evac_trend > 0.5:
+        st.caption("📈 Evacuation readiness is improving; maintain current awareness efforts.")
+    elif evac_trend < -0.5:
+        st.caption("📉 Evacuation readiness is dropping – review early warning effectiveness.")
+    if resist_trend > 0.3:
+        st.caption("⚠️ Resistance is growing; potential trigger events (like demolition threats) may be escalating tensions.")
 else:
     st.info("Run at least two steps to see the timeline.")
 
