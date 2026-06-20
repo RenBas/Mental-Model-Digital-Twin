@@ -310,7 +310,6 @@ class DigitalTwin:
             if hasattr(node, '_compute_score'):
                 node.current_score = node._compute_score()
             else:
-                # Compute manually from baseline_cac
                 c = node.baseline_cac['Challenge']
                 a = node.baseline_cac['Acceptance']
                 co = node.baseline_cac['Commitment']
@@ -339,6 +338,7 @@ class DigitalTwin:
 
     def get_metrics(self):
         return self.analytics.get_behavioral_metrics()
+
 # ==============================================================================
 # 6. BUILD BASE MODEL DATA
 # ==============================================================================
@@ -427,12 +427,12 @@ if 'twin' not in st.session_state:
         nodes=base_nodes,
         edges=base_edges,
         cluster_profiles=get_mock_clusters(),
-        total_population=140,   # default to actual baseline N
+        total_population=140,   # baseline N for Sitio Dal-og
         flood_severity=0.3,
         lgu_threat=False
     )
     st.session_state.data_calibrated = False
-    st.session_state.respondent_clusters = None   # will hold original data with clusters
+    st.session_state.respondent_clusters = None
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -470,7 +470,7 @@ with st.sidebar:
                             X_scaled = scaler.fit_transform(df_num)
 
                             # Auto-determine K via silhouette score
-                            best_k = 3   # fallback
+                            best_k = 3
                             best_sil = -1
                             for k in range(2, min(6, len(df_raw))):
                                 km = KMeans(n_clusters=k, random_state=42, n_init=10)
@@ -480,16 +480,13 @@ with st.sidebar:
                                     best_sil = sil
                                     best_k = k
 
-                            # Final clustering with best K
                             kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
                             final_labels = kmeans.fit_predict(X_scaled)
 
-                            # Store original data with cluster labels
                             df_labeled = df_raw.copy()
                             df_labeled['Cluster'] = final_labels
                             st.session_state.respondent_clusters = df_labeled
 
-                            # Build cluster profiles
                             df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
                             df_scaled['Cluster'] = final_labels
 
@@ -526,8 +523,11 @@ with st.sidebar:
     st.markdown("---")
     st.header("🎛️ Simulation Controls")
 
+    steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
+
     if st.button("▶️ Run", use_container_width=True, type="primary"):
-        st.session_state.twin.step()
+        for _ in range(steps_to_run):
+            st.session_state.twin.step()
         st.rerun()
 
     if st.button("🔄 Reset Simulation", use_container_width=True):
@@ -580,7 +580,6 @@ st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 twin = st.session_state.twin
 metrics = twin.get_metrics()
 
-# Overall metrics
 st.subheader("Community Behavioral Outcomes")
 st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
 col1, col2, col3, col4 = st.columns(4)
@@ -591,7 +590,6 @@ col4.metric("Resisting LGU", f"{metrics['Resisting LGU (%)']:.1f}%")
 
 st.markdown("---")
 
-# Network graph
 st.subheader("Socio-Psychological Network Graph")
 G = nx.DiGraph()
 for name, node in twin.nodes.items():
@@ -628,7 +626,6 @@ st.caption("🎨 Node colors: yellow (low) → purple (high).")
 
 st.markdown("---")
 
-# Cluster breakdown
 st.subheader("Behavioral Distribution by Cluster")
 cluster_df = twin.analytics.get_cluster_breakdown()
 st.caption("Overall metrics are the weighted average of these per‑cluster percentages. Population counts shown in the table below.")
@@ -654,28 +651,19 @@ pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
 st.dataframe(pop_summary.T, use_container_width=True)
 st.caption("The sum of these counts equals the total population shown above.")
 
-# Respondent listing per cluster (only when calibrated)
 if st.session_state.data_calibrated and st.session_state.respondent_clusters is not None:
     st.markdown("---")
     st.subheader("📋 Respondent Details by Cluster")
     st.caption("Names and barangays of each respondent, grouped by their psychological cluster. Useful for targeted interventions.")
     df_resp = st.session_state.respondent_clusters
-    # Map numeric cluster labels to profile names if needed (profiles are in twin.cluster_profiles ordered)
-    # Actually, the cluster labels correspond to the order of new_profiles iteration, which is based on sorted clusters.
-    # For simplicity, we can display the numeric cluster and a mapping table.
-    # But the twin cluster_profiles keys are generated names; we can create a mapping from numeric label to name.
-    # The final_labels correspond to cluster indices i (0..K-1). The twin.cluster_profiles keys were generated in loop over range(best_k), so the order matches.
     profile_names = list(twin.cluster_profiles.keys())
-    # Ensure mapping from label to name
     label_to_name = {i: profile_names[i] for i in range(len(profile_names))}
     df_resp['Cluster Name'] = df_resp['Cluster'].map(label_to_name)
 
-    # Show a table grouped by cluster name (optional expander)
     for cname, group in df_resp.groupby('Cluster Name'):
         with st.expander(f"{cname} ({len(group)} respondents)"):
             st.dataframe(group[['Respondent_Name', 'Barangay_Name']], use_container_width=True)
 
-    # Download full labeled data
     csv_full = df_resp.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download Full Respondent List with Cluster Labels", csv_full,
                        file_name='respondents_with_clusters.csv', mime='text/csv')
@@ -701,10 +689,15 @@ fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
                      size="Commitment", color="Construct", size_max=60,
                      title="Community CAC Profile")
 st.plotly_chart(fig_cac, use_container_width=True)
+st.caption(
+    "ℹ️ The intervention sliders set the **baseline CAC values for each psychological construct**, "
+    "which directly determine the node's current score. The bubble chart shows the **average CAC components "
+    "across the entire agent population** (including cluster‑specific profiles and individual noise), "
+    "so the numbers may differ from the sliders. This chart reflects the community's aggregated psychological state."
+)
 
 st.markdown("---")
 st.subheader("Policy Insights & Actionable Recommendations")
-# Dynamic insights based on current metrics and node scores
 insights = []
 if metrics['Projected to Relocate (%)'] > 30:
     insights.append("🔴 **High relocation desire** – Consider expanding resettlement and financial assistance programs.")
