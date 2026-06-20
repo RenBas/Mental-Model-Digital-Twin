@@ -400,33 +400,13 @@ st.title("Digital Twin: Socio-Psychological Dynamics of Flood-Prone Communities"
 st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 st.markdown("---")
 
-uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
-
-if uploaded_file is not None:
-    try:
-        df_raw = pd.read_csv(uploaded_file)
-        missing_cols = [col for col in csv_columns if col not in df_raw.columns]
-
-        if missing_cols:
-            st.error(f"❌ Missing columns: {', '.join(missing_cols[:5])}...")
-            st.info("Please use the template CSV to ensure all 38 columns are present.")
-            # Disable the recalibrate button
-            st.button("🔄 Recalibrate Model (disabled – columns missing)", disabled=True)
-        else:
-            st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-            n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3)
-
-            if len(df_raw) < n_clusters:
-                st.error(f"❌ Number of clusters ({n_clusters}) cannot exceed the number of respondents ({len(df_raw)}). Please lower K.")
-                st.stop()
-
-            if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
-                # ... (rest of recalibration code unchanged)
-                pass
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-else:
-    st.info("📝 Using mock data. Upload the 38-column CSV to calibrate with real CAC survey data.")
+with st.sidebar:
+    st.header("Model Configuration")
+    target_area = st.selectbox("Target Area / Data Source", [
+        "Sitio Dal-og (Baseline Model)",
+        "Barangay Tagoloan Proper (Coming Soon)",
+        "Barangay Mohon (Coming Soon)"
+    ])
 
     st.markdown("---")
     st.header("📊 Data Upload & Calibration (36 CAC Variables)")
@@ -451,24 +431,38 @@ else:
         mime='text/csv'
     )
 
-    uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
+    # File uploader with unique key to prevent duplicate element ID error
+    uploaded_file = st.file_uploader(
+        "Upload Resident Survey Data (CSV)",
+        type=["csv"],
+        key="survey_uploader"
+    )
 
     if uploaded_file is not None:
         try:
             df_raw = pd.read_csv(uploaded_file)
             missing_cols = [col for col in csv_columns if col not in df_raw.columns]
+
             if missing_cols:
-                st.error(f"❌ Error: CSV is missing columns. Missing: {missing_cols[:3]}...")
+                st.error(f"❌ Missing columns: {', '.join(missing_cols[:5])}...")
+                st.info("Please use the template CSV to ensure all 38 columns are present.")
+                # Show a disabled button so the user knows it exists
+                st.button(
+                    "🔄 Recalibrate Model (disabled – fix columns first)",
+                    disabled=True,
+                    use_container_width=True,
+                    key="recalibrate_disabled"
+                )
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3)
+                n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3, key="k_slider")
 
-                # K‑Means safety check
+                # Safety check for K
                 if len(df_raw) < n_clusters:
                     st.error(f"❌ Number of clusters ({n_clusters}) cannot exceed the number of respondents ({len(df_raw)}). Please lower K.")
                     st.stop()
 
-                if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
+                if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True, key="recalibrate_button"):
                     with st.spinner("Running K-Means & Interpreting Profiles..."):
                         numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
                         df_numeric = df_raw[numeric_cols]
@@ -505,7 +499,6 @@ else:
                         st.session_state.uploaded_pop_size = len(df_raw)
                         st.session_state.pop_slider = len(df_raw)
 
-                        # Generate agents AND immediately evaluate initial decisions
                         st.session_state.agents = st.session_state.generator.generate_population(
                             len(df_raw), new_profiles
                         )
@@ -549,13 +542,7 @@ else:
         st.session_state.engine = SimulationEngine(fresh_nodes, edges, damping_factor=0.5)
         st.session_state.history = []
         st.session_state.step_count = 0
-        for agent in st.session_state.agents:
-            agent.has_relocated = False
-            agent.will_evacuate = False
-            agent.is_adapting_in_place = False
-            agent.is_resisting_lgu = False
-            # Re‑evaluate with current engine states (which are now baseline)
-        # Regenerate agents to align with the fresh engine
+        # Regenerate agents with current cluster profiles and immediate evaluation
         st.session_state.agents = st.session_state.generator.generate_population(
             st.session_state.pop_slider, st.session_state.cluster_profiles
         )
@@ -590,7 +577,6 @@ else:
         st.session_state.agents = st.session_state.generator.generate_population(
             pop_size, st.session_state.cluster_profiles
         )
-        # Immediate evaluation so dashboard shows non‑zero initial state
         for agent in st.session_state.agents:
             agent.evaluate_decisions(st.session_state.flood_sev, st.session_state.lgu_threat)
         st.session_state.analytics = CommunityAnalytics(st.session_state.agents, nodes)
