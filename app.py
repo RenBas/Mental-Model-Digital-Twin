@@ -400,13 +400,33 @@ st.title("Digital Twin: Socio-Psychological Dynamics of Flood-Prone Communities"
 st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 st.markdown("---")
 
-with st.sidebar:
-    st.header("Model Configuration")
-    target_area = st.selectbox("Target Area / Data Source", [
-        "Sitio Dal-og (Baseline Model)",
-        "Barangay Tagoloan Proper (Coming Soon)",
-        "Barangay Mohon (Coming Soon)"
-    ])
+uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"])
+
+if uploaded_file is not None:
+    try:
+        df_raw = pd.read_csv(uploaded_file)
+        missing_cols = [col for col in csv_columns if col not in df_raw.columns]
+
+        if missing_cols:
+            st.error(f"❌ Missing columns: {', '.join(missing_cols[:5])}...")
+            st.info("Please use the template CSV to ensure all 38 columns are present.")
+            # Disable the recalibrate button
+            st.button("🔄 Recalibrate Model (disabled – columns missing)", disabled=True)
+        else:
+            st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
+            n_clusters = st.slider("Number of Clusters (K) to generate", 2, 5, 3)
+
+            if len(df_raw) < n_clusters:
+                st.error(f"❌ Number of clusters ({n_clusters}) cannot exceed the number of respondents ({len(df_raw)}). Please lower K.")
+                st.stop()
+
+            if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
+                # ... (rest of recalibration code unchanged)
+                pass
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+else:
+    st.info("📝 Using mock data. Upload the 38-column CSV to calibrate with real CAC survey data.")
 
     st.markdown("---")
     st.header("📊 Data Upload & Calibration (36 CAC Variables)")
