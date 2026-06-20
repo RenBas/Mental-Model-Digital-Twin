@@ -8,7 +8,7 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 
 # ==============================================================================
-# 1. DATA CLASSES (unchanged but with corrected initial scores)
+# 1. DATA CLASSES
 # ==============================================================================
 
 class MentalModelNode:
@@ -18,17 +18,25 @@ class MentalModelNode:
         self.correlation_matrix = np.array([[1.0, corr_c_a, corr_c_ch],
                                             [corr_c_a, 1.0, corr_a_ch],
                                             [corr_c_ch, corr_a_ch, 1.0]])
-        # Initial score derived from CAC triad
-        self.current_score = self._compute_initial_score()
+        # Initial score from CAC triad
+        self.current_score = self._compute_score()
         self.previous_delta = 0.0
 
-    def _compute_initial_score(self):
+    def _compute_score(self):
         c = self.baseline_cac['Challenge']
         a = self.baseline_cac['Acceptance']
         co = self.baseline_cac['Commitment']
-        # Score = (Acceptance + Commitment)/2 + (50 - Challenge)/2, clamped to 0-100
         raw = (a + co) / 2.0 + (50.0 - c) / 2.0
         return max(0.0, min(100.0, raw))
+
+    def update_cac(self, challenge=None, acceptance=None, commitment=None):
+        if challenge is not None:
+            self.baseline_cac['Challenge'] = challenge
+        if acceptance is not None:
+            self.baseline_cac['Acceptance'] = acceptance
+        if commitment is not None:
+            self.baseline_cac['Commitment'] = commitment
+        self.current_score = self._compute_score()
 
 class MentalModelEdge:
     def __init__(self, source_name, target_name, coefficient, r_square, nodes_dict):
@@ -36,7 +44,6 @@ class MentalModelEdge:
         self.target_name = target_name
         self.coefficient = coefficient
         self.r_square = r_square
-        # nodes_dict is passed but we don't need to store nodes here
 
 class ResidentAgent:
     def __init__(self, agent_id, cluster_name, node_states, cac_states, archetype):
@@ -117,7 +124,7 @@ def generate_lgu_cluster_name(centroids, col_map):
     return PERSONA_MAP.get(top_node, "Balanced Community Segment"), top_node
 
 # ==============================================================================
-# 3. POPULATION GENERATOR (fixed macro_base clipping)
+# 3. POPULATION GENERATOR
 # ==============================================================================
 class PopulationGenerator:
     def __init__(self, col_map):
@@ -157,7 +164,6 @@ class PopulationGenerator:
                     for node_name, clean_name in self.col_map.items():
                         ac_val = individual_cac_states.get(f"{clean_name}_Acceptance", 33.3)
                         co_val = individual_cac_states.get(f"{clean_name}_Commitment", 33.3)
-                        # Fixed: average to avoid clipping
                         macro_base = (ac_val + co_val) / 2.0
                         macro_deviation = engine_nodes[node_name].current_score - 50.0
                         noise = np.random.normal(0, 3.0)
@@ -168,7 +174,6 @@ class PopulationGenerator:
                         macro_deviation = engine_nodes[node_name].current_score - 50.0
                         noise = np.random.normal(0, 5.0)
                         agent_macro_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
-                        # Dummy CAC for visualisation
                         clean = self.col_map[node_name]
                         individual_cac_states[f"{clean}_Challenge"] = 33.3
                         individual_cac_states[f"{clean}_Acceptance"] = 33.3
@@ -179,7 +184,7 @@ class PopulationGenerator:
         return agents
 
 # ==============================================================================
-# 4. COMMUNITY ANALYTICS (unchanged)
+# 4. COMMUNITY ANALYTICS
 # ==============================================================================
 class CommunityAnalytics:
     def __init__(self, agents_list, node_names):
@@ -222,14 +227,17 @@ class CommunityAnalytics:
         }
 
     def get_cluster_breakdown(self):
-        cluster_stats = self.df.groupby('Cluster').agg({
-            'Has_Relocated': 'mean',
-            'Will_Evacuate': 'mean',
-            'Is_Adapting': 'mean',
-            'Is_Resisting': 'mean'
-        }) * 100
-        cluster_stats.columns = ['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %']
-        cluster_stats['Population Count'] = self.df['Cluster'].value_counts()
+        # Per-cluster percentages and population counts
+        cluster_stats = self.df.groupby('Cluster').agg(
+            Count=('Agent_ID', 'count'),
+            Relocated=('Has_Relocated', 'mean'),
+            Evacuating=('Will_Evacuate', 'mean'),
+            Adapting=('Is_Adapting', 'mean'),
+            Resisting=('Is_Resisting', 'mean')
+        )
+        cluster_stats[['Relocated','Evacuating','Adapting','Resisting']] *= 100
+        cluster_stats.columns = ['Population Count', 'Projected to Relocate %',
+                                 'Evacuating %', 'Adapting %', 'Resisting %']
         return cluster_stats.reset_index()
 
     def get_cac_averages(self, col_map):
@@ -242,7 +250,7 @@ class CommunityAnalytics:
         return cac_avgs
 
 # ==============================================================================
-# 5. THE UNIFIED DIGITAL TWIN (replaces SimulationEngine + ABM coupling)
+# 5. UNIFIED DIGITAL TWIN
 # ==============================================================================
 class DigitalTwin:
     def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
@@ -257,23 +265,20 @@ class DigitalTwin:
         self.step_count = 0
         self.history = []
 
-        # Build incoming edges index for fast lookup
         self.incoming_edges = {name: [] for name in self.nodes.keys()}
         for edge in self.edges:
             self.incoming_edges[edge.target_name].append((edge.source_name, edge.coefficient))
 
-        # Generate initial agent population
         self.generator = PopulationGenerator(col_map)
         self.agents = self.generator.generate_population(
             self.total_population, self.cluster_profiles, self.nodes
         )
-        # Evaluate initial decisions
         for agent in self.agents:
             agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
         self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
 
     def step(self):
-        # 1. System dynamics propagation (state deviation from 50)
+        # System dynamics
         net_influences = {name: 0.0 for name in self.nodes}
         for target_name, sources in self.incoming_edges.items():
             for source_name, coeff in sources:
@@ -286,32 +291,28 @@ class DigitalTwin:
             node.current_score = max(0.0, min(100.0, node.current_score))
             node.previous_delta = delta
 
-        # 2. Propagate new macro states to agents (with noise)
+        # Agent coupling
         for agent in self.agents:
             for node_name in self.nodes.keys():
                 base_score = self.nodes[node_name].current_score
                 noise = np.random.normal(0, 3.0)
                 agent.node_states[node_name] = max(0.0, min(100.0, base_score + noise))
 
-        # 3. Re-evaluate decisions
         for agent in self.agents:
             agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
 
-        # 4. Update analytics and history
         self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
         self.history.append(self.analytics.get_behavioral_metrics())
         self.step_count += 1
 
     def reset(self, new_flood_severity=None, new_lgu_threat=None):
-        # Re-initialise nodes to baseline scores
         for node in self.nodes.values():
-            node.current_score = node._compute_initial_score()
+            node.current_score = node._compute_score()
             node.previous_delta = 0.0
         if new_flood_severity is not None:
             self.flood_severity = new_flood_severity
         if new_lgu_threat is not None:
             self.lgu_threat = new_lgu_threat
-        # Regenerate agents with new engine state
         self.agents = self.generator.generate_population(
             self.total_population, self.cluster_profiles, self.nodes
         )
@@ -333,7 +334,7 @@ class DigitalTwin:
         return self.analytics.get_behavioral_metrics()
 
 # ==============================================================================
-# 6. INITIAL MODEL DATA (unchanged)
+# 6. BUILD BASE MODEL DATA
 # ==============================================================================
 @st.cache_resource
 def build_base_nodes_and_edges():
@@ -414,14 +415,12 @@ def get_mock_clusters():
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
-# ---------- Session State Initialisation ----------
+# ---------- Session State ----------
 if 'twin' not in st.session_state:
-    # Build initial twin with mock clusters and 1000 agents
-    mock_clusters = get_mock_clusters()
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
         edges=base_edges,
-        cluster_profiles=mock_clusters,
+        cluster_profiles=get_mock_clusters(),
         total_population=1000,
         flood_severity=0.3,
         lgu_threat=False
@@ -451,12 +450,13 @@ with st.sidebar:
             missing = [c for c in csv_columns if c not in df_raw.columns]
             if missing:
                 st.error(f"❌ Missing columns: {', '.join(missing[:5])}...")
-                st.button("🔄 Recalibrate (disabled)", disabled=True, key="disabled_calib")
+                st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                n_clusters = st.slider("Number of clusters (K)", 2, 5, 3, key="k_slider")
+                # K fixed to 3, no slider
+                n_clusters = 3
                 if len(df_raw) < n_clusters:
-                    st.error(f"K ({n_clusters}) cannot exceed respondents ({len(df_raw)}). Lower K.")
+                    st.error("Not enough respondents for 3 clusters.")
                 else:
                     if st.button("🔄 Recalibrate Model with Uploaded CAC Data", use_container_width=True):
                         with st.spinner("Running K-Means..."):
@@ -487,7 +487,6 @@ with st.sidebar:
                                     dominant_driver=driver
                                 )
 
-                            # Update twin with new profiles and exact population size
                             st.session_state.twin.update_cluster_profiles(new_profiles)
                             st.session_state.twin.update_population_size(len(df_raw))
                             st.session_state.data_calibrated = True
@@ -501,18 +500,9 @@ with st.sidebar:
     st.markdown("---")
     st.header("🎛️ Simulation Controls")
 
-    if st.button("▶️ Run 1 Step", use_container_width=True, type="primary"):
+    if st.button("▶️ Run", use_container_width=True, type="primary"):
         st.session_state.twin.step()
         st.rerun()
-
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        steps = st.selectbox("Steps", [2,3,4,5,6,7,8,9,10], index=8)
-    with col2:
-        if st.button(f"▶️ Run {steps} Steps", use_container_width=True):
-            for _ in range(steps):
-                st.session_state.twin.step()
-            st.rerun()
 
     if st.button("🔄 Reset Simulation", use_container_width=True):
         st.session_state.twin.reset()
@@ -538,10 +528,24 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🎚️ LGU Intervention Sliders")
-    with st.expander("Adjust node scores directly (0–100)", expanded=False):
+    st.caption("Adjust the three CAC components directly. Changing them recalculates the node score instantly.")
+    with st.expander("Expand to modify constructs", expanded=False):
         for node_name, node in st.session_state.twin.nodes.items():
-            val = st.slider(node_name, 0, 100, int(node.current_score), key=f"interv_{node_name}")
-            node.current_score = float(val)  # immediate feedback
+            st.markdown(f"**{node_name}**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_ch = st.slider(f"Challenge", 0.0, 100.0, float(node.baseline_cac['Challenge']),
+                                   key=f"{node_name}_ch")
+            with col2:
+                new_ac = st.slider(f"Acceptance", 0.0, 100.0, float(node.baseline_cac['Acceptance']),
+                                   key=f"{node_name}_ac")
+            with col3:
+                new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']),
+                                   key=f"{node_name}_co")
+            if (new_ch != node.baseline_cac['Challenge'] or
+                new_ac != node.baseline_cac['Acceptance'] or
+                new_co != node.baseline_cac['Commitment']):
+                node.update_cac(challenge=new_ch, acceptance=new_ac, commitment=new_co)
 
 # ---------- Main Dashboard ----------
 st.title("Tagoloan Flood-Prone Communities Digital Twin")
@@ -551,7 +555,7 @@ twin = st.session_state.twin
 metrics = twin.get_metrics()
 
 st.subheader("Community Behavioral Outcomes")
-st.caption("Realistic baselines calculated from CAC data. Use 'Run 1 Step' to see dynamic changes.")
+st.caption("Realistic baselines calculated from CAC data. Use 'Run' to see one‑step dynamics.")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Population", f"{metrics['Total Population']:,}")
 col2.metric("Projected to Relocate", f"{metrics['Projected to Relocate (%)']:.1f}%")
@@ -559,52 +563,71 @@ col3.metric("Evacuating", f"{metrics['Evacuating (%)']:.1f}%")
 col4.metric("Resisting LGU", f"{metrics['Resisting LGU (%)']:.1f}%")
 
 st.markdown("---")
-col_left, col_right = st.columns([2, 1])
 
-with col_left:
-    st.subheader("Socio-Psychological Network Graph")
-    G = nx.DiGraph()
-    for name, node in twin.nodes.items():
-        G.add_node(name, score=node.current_score)
-    for edge in twin.edges:
-        G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
+# Network graph (full width)
+st.subheader("Socio-Psychological Network Graph")
+G = nx.DiGraph()
+for name, node in twin.nodes.items():
+    G.add_node(name, score=node.current_score)
+for edge in twin.edges:
+    G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
 
-    pos = nx.spring_layout(G, k=0.35, seed=42)
-    edge_x, edge_y = [], []
-    for e in G.edges():
-        x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
-        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
-                            hoverinfo='none', mode='lines')
-    node_x, node_y, node_text, node_color = [], [], [], []
-    for n, d in G.nodes(data=True):
-        x, y = pos[n]
-        node_x.append(x); node_y.append(y)
-        node_text.append(f"{n}<br>Score: {d['score']:.1f}")
-        node_color.append(d['score'])
-    node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
-                            text=list(G.nodes()), textposition="bottom center",
-                            hovertext=node_text, hoverinfo='text',
-                            marker=dict(showscale=True, colorscale='Viridis', reversescale=True,
-                                        color=node_color, size=25,
-                                        colorbar=dict(thickness=10, title='Score')))
-    fig_net = go.Figure(data=[edge_trace, node_trace],
-                        layout=go.Layout(title='12 Nodes & 18 Causal Pathways', showlegend=False,
-                                         margin=dict(b=20,l=5,r=5,t=40),
-                                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-    st.plotly_chart(fig_net, use_container_width=True)
-    st.caption("🎨 Node colors: yellow (low) → purple (high).")
+pos = nx.spring_layout(G, k=0.35, seed=42)
+edge_x, edge_y = [], []
+for e in G.edges():
+    x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
+    edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
+                        hoverinfo='none', mode='lines')
+node_x, node_y, node_text, node_color = [], [], [], []
+for n, d in G.nodes(data=True):
+    x, y = pos[n]
+    node_x.append(x); node_y.append(y)
+    node_text.append(f"{n}<br>Score: {d['score']:.1f}")
+    node_color.append(d['score'])
+node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                        text=list(G.nodes()), textposition="bottom center",
+                        hovertext=node_text, hoverinfo='text',
+                        marker=dict(showscale=True, colorscale='Viridis', reversescale=True,
+                                    color=node_color, size=25,
+                                    colorbar=dict(thickness=10, title='Score')))
+fig_net = go.Figure(data=[edge_trace, node_trace],
+                    layout=go.Layout(title='12 Nodes & 18 Causal Pathways', showlegend=False,
+                                     margin=dict(b=20,l=5,r=5,t=40),
+                                     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+st.plotly_chart(fig_net, use_container_width=True)
+st.caption("🎨 Node colors: yellow (low) → purple (high).")
 
-with col_right:
-    st.subheader("Behavioral Distribution by Cluster")
-    cluster_df = twin.analytics.get_cluster_breakdown()
-    df_melted = cluster_df.melt(id_vars='Cluster',
-                                value_vars=['Projected to Relocate %','Evacuating %','Adapting %','Resisting %'],
-                                var_name='Behavior', value_name='Percentage')
-    fig_cluster = px.bar(df_melted, x='Cluster', y='Percentage', color='Behavior',
-                         barmode='group', height=450)
-    st.plotly_chart(fig_cluster, use_container_width=True)
+# Cluster breakdown below network (full width)
+st.subheader("Behavioral Distribution by Cluster")
+cluster_df = twin.analytics.get_cluster_breakdown()
+# Show a note about correspondence
+st.caption("Overall metrics are the weighted average of these per‑cluster percentages. Population counts shown in brackets.")
+
+# Build a combined bar chart with counts
+fig_cluster = go.Figure()
+behaviors = ['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %']
+colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA']
+for i, beh in enumerate(behaviors):
+    fig_cluster.add_trace(go.Bar(
+        x=cluster_df['Cluster'],
+        y=cluster_df[beh],
+        name=beh,
+        text=[f"{v:.1f}%" for v in cluster_df[beh]],
+        textposition='outside',
+        marker_color=colors[i]
+    ))
+# Add population count as a separate trace on secondary axis if desired, but we'll just show in hover
+fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Cluster (click on legend to isolate)',
+                          yaxis_title='Percentage', height=450)
+st.plotly_chart(fig_cluster, use_container_width=True)
+
+# Show population counts explicitly
+st.markdown("**Cluster populations:**")
+pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
+st.dataframe(pop_summary.T, use_container_width=True)
+st.caption("The sum of these counts equals the total population shown above.")
 
 st.markdown("---")
 st.subheader("Regression Analysis & Causal Pathways")
@@ -617,7 +640,7 @@ st.dataframe(pd.DataFrame(reg_data), use_container_width=True, hide_index=True, 
 st.markdown("---")
 st.subheader("Cluster Profiles (K-Means Nomenclature)")
 if st.session_state.data_calibrated:
-    st.success("Profiles extracted from uploaded survey data.")
+    st.success("Profiles extracted from uploaded survey data (K=3).")
 else:
     st.info("Showing mock profiles. Upload and recalibrate for data‑driven names.")
 profiles = [{"Cluster": name, "Share": f"{p.population_ratio*100:.1f}%",
