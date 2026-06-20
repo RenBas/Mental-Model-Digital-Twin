@@ -305,22 +305,30 @@ class DigitalTwin:
         self.step_count += 1
 
     def reset(self, new_flood_severity=None, new_lgu_threat=None):
-        for node in self.nodes.values():
+    for node in self.nodes.values():
+        # Fallback if node is from an older class without _compute_score
+        if hasattr(node, '_compute_score'):
             node.current_score = node._compute_score()
-            node.previous_delta = 0.0
-        if new_flood_severity is not None:
-            self.flood_severity = new_flood_severity
-        if new_lgu_threat is not None:
-            self.lgu_threat = new_lgu_threat
-        self.agents = self.generator.generate_population(
-            self.total_population, self.cluster_profiles, self.nodes
-        )
-        for agent in self.agents:
-            agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
-        self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
-        self.history = []
-        self.step_count = 0
-
+        else:
+            # Compute manually from baseline_cac
+            c = node.baseline_cac['Challenge']
+            a = node.baseline_cac['Acceptance']
+            co = node.baseline_cac['Commitment']
+            node.current_score = max(0.0, min(100.0, (a + co) / 2.0 + (50.0 - c) / 2.0))
+        node.previous_delta = 0.0
+    if new_flood_severity is not None:
+        self.flood_severity = new_flood_severity
+    if new_lgu_threat is not None:
+        self.lgu_threat = new_lgu_threat
+    self.agents = self.generator.generate_population(
+        self.total_population, self.cluster_profiles, self.nodes
+    )
+    for agent in self.agents:
+        agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
+    self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
+    self.history = []
+    self.step_count = 0
+    
     def update_population_size(self, new_size):
         self.total_population = new_size
         self.reset()
