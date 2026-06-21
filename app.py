@@ -226,6 +226,60 @@ class CommunityAnalytics:
             "Resisting LGU (%)": (self.df['Is_Resisting'].sum() / self.total_population) * 100
         }
 
+    def get_advanced_metrics(self):
+        if self.total_population == 0:
+            return {
+                "Proactive Preparedness (%)": 0.0,
+                "LGU Trust & Cooperation (%)": 0.0,
+                "Heritage-Based Refusal (%)": 0.0,
+                "Demolition Anxiety (%)": 0.0,
+                "Relocation Readiness (%)": 0.0
+            }
+        # 1. Proactive Disaster Preparedness Rate
+        # Agents with both Prevention and flooding > 60 and Coping during flooding > 60
+        proactive = self.df[
+            (self.df["Prevention and flooding"] > 60) & 
+            (self.df["Coping during flooding"] > 60)
+        ].shape[0]
+        proactive_pct = (proactive / self.total_population) * 100
+
+        # 2. LGU Trust & Cooperation Index
+        # Agents with Viewpoints towards LGU > 50 and Assistance for relocation > 50
+        trust_coop = self.df[
+            (self.df["Viewpoints towards LGU"] > 50) & 
+            (self.df["Assistance for relocation"] > 50)
+        ].shape[0]
+        trust_pct = (trust_coop / self.total_population) * 100
+
+        # 3. Heritage-Driven Relocation Refusal
+        # Agents who have NOT relocated and have Family history and identity > 70
+        heritage_refusal = self.df[
+            (self.df["Has_Relocated"] == False) & 
+            (self.df["Family history and identity"] > 70)
+        ].shape[0]
+        heritage_pct = (heritage_refusal / self.total_population) * 100
+
+        # 4. Housing Demolition Anxiety / Panic Rate
+        # Agents with Fear of housing demolition > 70
+        anxiety = self.df[self.df["Fear of housing demolition"] > 70].shape[0]
+        anxiety_pct = (anxiety / self.total_population) * 100
+
+        # 5. Relocation Readiness / "Early Adopters"
+        # Agents who have already relocated AND Preference and adaptation > 60
+        ready = self.df[
+            (self.df["Has_Relocated"] == True) & 
+            (self.df["Preference and adaptation"] > 60)
+        ].shape[0]
+        readiness_pct = (ready / self.total_population) * 100
+
+        return {
+            "Proactive Preparedness (%)": proactive_pct,
+            "LGU Trust & Cooperation (%)": trust_pct,
+            "Heritage-Based Refusal (%)": heritage_pct,
+            "Demolition Anxiety (%)": anxiety_pct,
+            "Relocation Readiness (%)": readiness_pct
+        }
+
     def get_cluster_breakdown(self):
         cluster_stats = self.df.groupby('Cluster').agg(
             Count=('Agent_ID', 'count'),
@@ -335,6 +389,9 @@ class DigitalTwin:
 
     def get_metrics(self):
         return self.analytics.get_behavioral_metrics()
+
+    def get_advanced_metrics(self):
+        return self.analytics.get_advanced_metrics()
 
 # ==============================================================================
 # 6. BUILD BASE MODEL DATA
@@ -598,7 +655,6 @@ with st.sidebar:
         help="0 = light rain, 1 = extreme rainfall. Higher values increase evacuation likelihood."
     )
 
-    # Convert severity to rainfall amount
     if flood_sev <= 0.25:
         rainfall_mm = flood_sev * 40
         color_code = "green"
@@ -618,7 +674,6 @@ with st.sidebar:
 
     st.markdown(f"🌧️ **{rainfall_mm:.0f} mm** – {label}")
 
-    # Gauge
     gauge_html = f"""
     <div style="width:100%; height:30px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-bottom:10px;">
         <div style="position:absolute; left:{flood_sev*100}%; top:-5px; width:4px; height:40px; background:black; border-radius:2px;"></div>
@@ -629,7 +684,6 @@ with st.sidebar:
     """
     st.markdown(gauge_html, unsafe_allow_html=True)
 
-    # Store the severity value (already used by the twin)
     st.session_state.twin.flood_severity = flood_sev
 
     lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
@@ -674,6 +728,7 @@ st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 
 twin = st.session_state.twin
 metrics = twin.get_metrics()
+advanced = twin.get_advanced_metrics()
 pop = metrics['Total Population']
 reloc_pct = metrics['Projected to Relocate (%)']
 evac_pct = metrics['Evacuating (%)']
@@ -681,6 +736,7 @@ resist_pct = metrics['Resisting LGU (%)']
 
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
 
+# ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
 st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
 col1, col2, col3, col4 = st.columns(4)
@@ -712,6 +768,54 @@ else:
     snapshot_parts.append(f"Negligible resistance ({resist_pct:.1f}%) — community is largely cooperative.")
 
 st.caption(f"📊 **{barangay_title} snapshot:** {' '.join(snapshot_parts)}")
+
+# ---- Advanced Behavioral Indicators ----
+st.markdown("---")
+st.subheader("Advanced Community Indicators")
+st.caption("Derived from the CAC constructs and regression pathways, these metrics reveal deeper community dynamics.")
+adv_col1, adv_col2, adv_col3, adv_col4, adv_col5 = st.columns(5)
+adv_col1.metric("Proactive Preparedness", f"{advanced['Proactive Preparedness (%)']:.1f}%")
+adv_col2.metric("LGU Trust & Cooperation", f"{advanced['LGU Trust & Cooperation (%)']:.1f}%")
+adv_col3.metric("Heritage‑Based Refusal", f"{advanced['Heritage-Based Refusal (%)']:.1f}%")
+adv_col4.metric("Demolition Anxiety", f"{advanced['Demolition Anxiety (%)']:.1f}%")
+adv_col5.metric("Relocation Readiness", f"{advanced['Relocation Readiness (%)']:.1f}%")
+
+# Interpretations for advanced metrics
+adv_interpretations = []
+if advanced['Proactive Preparedness (%)'] > 60:
+    adv_interpretations.append("🟢 **High proactive preparedness**: many residents are already taking independent action – leverage them as community champions.")
+elif advanced['Proactive Preparedness (%)'] < 30:
+    adv_interpretations.append("🔴 **Low proactive preparedness**: grassroots awareness campaigns are urgently needed.")
+else:
+    adv_interpretations.append("🟡 **Moderate proactive preparedness**: continue building local capacity.")
+
+if advanced['LGU Trust & Cooperation (%)'] > 60:
+    adv_interpretations.append("🟢 **Strong LGU trust**: policies will likely face less friction and higher compliance.")
+elif advanced['LGU Trust & Cooperation (%)'] < 30:
+    adv_interpretations.append("🔴 **Weak LGU trust**: any new program will encounter resistance; invest in trust‑building first.")
+else:
+    adv_interpretations.append("🟡 **Moderate trust**: maintain transparency to avoid erosion.")
+
+if advanced['Heritage-Based Refusal (%)'] > 30:
+    adv_interpretations.append("⚠️ **High heritage‑based refusal**: monetary incentives alone won't work; consider community‑relocation or psychosocial support.")
+else:
+    adv_interpretations.append("🟢 **Low heritage refusal**: relocation barriers are more practical than emotional.")
+
+if advanced['Demolition Anxiety (%)'] > 30:
+    adv_interpretations.append("🔴 **Elevated demolition anxiety**: immediate housing security guarantees and MHPSS are critical.")
+elif advanced['Demolition Anxiety (%)'] > 10:
+    adv_interpretations.append("🟡 **Moderate demolition anxiety**: monitor closely, especially if demolition threat is active.")
+else:
+    adv_interpretations.append("🟢 **Low demolition anxiety**: community feels relatively secure about housing.")
+
+if advanced['Relocation Readiness (%)'] > 20:
+    adv_interpretations.append("🟢 **High relocation readiness**: a pool of early adopters exists – target them for pilot resettlement programs.")
+elif advanced['Relocation Readiness (%)'] > 5:
+    adv_interpretations.append("🟡 **Moderate readiness**: some residents are prepared; identify and encourage them.")
+else:
+    adv_interpretations.append("🔴 **Low readiness**: psychological adaptation to relocation is minimal; phased engagement is necessary.")
+
+st.caption(" ".join(adv_interpretations))
 
 st.markdown("---")
 
@@ -848,7 +952,12 @@ insight_parts = []
 insight_parts.append(
     f"**{barangay_title}** has a simulated population of **{pop:,} residents**. "
     f"Currently, **{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
-    f"and **{resist_pct:.1f}%** show resistance to LGU initiatives."
+    f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
+    f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
+    f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
+    f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
+    f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
+    f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
 )
 
 if reloc_pct > 30:
@@ -905,6 +1014,18 @@ else:
         f"🟢 **Negligible resistance ({resist_pct:.1f}%):** The community is largely cooperative, "
         "providing a favourable environment for new programs and policies."
     )
+
+# Additional advanced insights
+if advanced['Proactive Preparedness (%)'] > 60:
+    insight_parts.append("🛠️ **High proactive preparedness** – community champions exist; engage them as partners.")
+if advanced['LGU Trust & Cooperation (%)'] < 40:
+    insight_parts.append("🤝 **Low LGU trust** – major barrier to policy rollouts; invest in trust‑building before launching new programs.")
+if advanced['Heritage-Based Refusal (%)'] > 30:
+    insight_parts.append("🏡 **High heritage‑based refusal** – relocation programs must include psychosocial and cultural components, not just financial aid.")
+if advanced['Demolition Anxiety (%)'] > 30:
+    insight_parts.append("⚠️ **Elevated demolition anxiety** – deploy MHPSS and issue clear housing guarantees immediately.")
+if advanced['Relocation Readiness (%)'] > 20:
+    insight_parts.append("🚀 **Relocation readiness high** – a pilot relocation program can succeed quickly if targeted at these early adopters.")
 
 if twin.nodes["Fear of housing demolition"].current_score > 60:
     insight_parts.append(
