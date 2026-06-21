@@ -587,8 +587,51 @@ with st.sidebar:
         st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
         st.rerun()
 
-    flood_sev = st.slider("Flood Severity (higher → easier to evacuate)", 0.0, 1.0,
-                          st.session_state.twin.flood_severity, 0.1)
+    # ---- Flood severity slider with rainfall mapping and gauge ----
+    st.markdown("**Flood Severity (Rainfall Intensity)**")
+    flood_sev = st.slider(
+        "Severity (0–1)",
+        0.0, 1.0,
+        st.session_state.twin.flood_severity,
+        0.01,
+        key="flood_sev_slider",
+        help="0 = light rain, 1 = extreme rainfall. Higher values increase evacuation likelihood."
+    )
+
+    # Convert severity to rainfall amount
+    if flood_sev <= 0.25:
+        rainfall_mm = flood_sev * 40
+        color_code = "green"
+        label = "Light rain"
+    elif flood_sev <= 0.50:
+        rainfall_mm = 10 + (flood_sev - 0.25) * 80
+        color_code = "#FFC107"
+        label = "Moderate rain (Yellow)"
+    elif flood_sev <= 0.75:
+        rainfall_mm = 30 + (flood_sev - 0.50) * 120
+        color_code = "orange"
+        label = "Heavy rain (Orange)"
+    else:
+        rainfall_mm = 60 + (flood_sev - 0.75) * 160
+        color_code = "red"
+        label = "Torrential rain (Red)"
+
+    st.markdown(f"🌧️ **{rainfall_mm:.0f} mm** – {label}")
+
+    # Gauge
+    gauge_html = f"""
+    <div style="width:100%; height:30px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-bottom:10px;">
+        <div style="position:absolute; left:{flood_sev*100}%; top:-5px; width:4px; height:40px; background:black; border-radius:2px;"></div>
+    </div>
+    <p style="margin-top:5px; font-size:12px;">
+        🟢 0-10 mm &nbsp; 🟡 10-30 mm &nbsp; 🟠 30-60 mm &nbsp; 🔴 >60 mm
+    </p>
+    """
+    st.markdown(gauge_html, unsafe_allow_html=True)
+
+    # Store the severity value (already used by the twin)
+    st.session_state.twin.flood_severity = flood_sev
+
     lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
     if flood_sev != st.session_state.twin.flood_severity or lgu_threat != st.session_state.twin.lgu_threat:
         if st.button("Apply Environmental Triggers"):
@@ -646,7 +689,6 @@ col2.metric("Projected to Relocate", f"{reloc_pct:.1f}%")
 col3.metric("Evacuating", f"{evac_pct:.1f}%")
 col4.metric("Resisting LGU", f"{resist_pct:.1f}%")
 
-# Barangay-specific snapshot interpretation
 snapshot_parts = []
 if reloc_pct > 30:
     snapshot_parts.append(f"High relocation pressure ({reloc_pct:.1f}%) indicates strong desire to move.")
@@ -802,16 +844,13 @@ if not high_challenge and not low_acceptance:
 st.markdown("---")
 st.subheader("Policy Insights & Actionable Recommendations")
 
-# Barangay-specific narrative using exact numbers
 insight_parts = []
-
 insight_parts.append(
     f"**{barangay_title}** has a simulated population of **{pop:,} residents**. "
     f"Currently, **{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
     f"and **{resist_pct:.1f}%** show resistance to LGU initiatives."
 )
 
-# Relocation analysis
 if reloc_pct > 30:
     insight_parts.append(
         f"🔴 **High relocation pressure ({reloc_pct:.1f}%):** This indicates strong desire or feasibility for moving, "
@@ -831,7 +870,6 @@ else:
         "rather than resettlement."
     )
 
-# Evacuation analysis
 if evac_pct > 80:
     insight_parts.append(
         f"🔵 **Very high evacuation readiness ({evac_pct:.1f}%):** Almost the entire community is willing to evacuate "
@@ -851,7 +889,6 @@ else:
         "through community engagement and trust‑building, as suggested by the network graph."
     )
 
-# Resistance analysis
 if resist_pct > 20:
     insight_parts.append(
         f"🟠 **Significant LGU resistance ({resist_pct:.1f}%):** Friction is apparent, especially if a demolition threat "
@@ -869,7 +906,6 @@ else:
         "providing a favourable environment for new programs and policies."
     )
 
-# Node-specific triggers
 if twin.nodes["Fear of housing demolition"].current_score > 60:
     insight_parts.append(
         "⚠️ **Elevated fear of demolition** – The network shows this node is particularly hot (high score). "
@@ -883,7 +919,6 @@ if twin.nodes["Viewpoints towards LGU"].current_score < 40:
         "'Assistance for relocation' and 'Fear of housing demolition'."
     )
 
-# Combined profile recommendation
 if reloc_pct < 10 and evac_pct > 80 and resist_pct < 5:
     insight_parts.append(
         "✅ **Optimal profile:** This barangay exhibits high resilience with low resistance and relocation pressure. "
