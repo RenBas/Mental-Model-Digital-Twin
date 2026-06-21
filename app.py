@@ -235,37 +235,27 @@ class CommunityAnalytics:
                 "Demolition Anxiety (%)": 0.0,
                 "Relocation Readiness (%)": 0.0
             }
-        # 1. Proactive Disaster Preparedness Rate
-        # Agents with both Prevention and flooding > 60 and Coping during flooding > 60
         proactive = self.df[
             (self.df["Prevention and flooding"] > 60) & 
             (self.df["Coping during flooding"] > 60)
         ].shape[0]
         proactive_pct = (proactive / self.total_population) * 100
 
-        # 2. LGU Trust & Cooperation Index
-        # Agents with Viewpoints towards LGU > 50 and Assistance for relocation > 50
         trust_coop = self.df[
             (self.df["Viewpoints towards LGU"] > 50) & 
             (self.df["Assistance for relocation"] > 50)
         ].shape[0]
         trust_pct = (trust_coop / self.total_population) * 100
 
-        # 3. Heritage-Driven Relocation Refusal
-        # Agents who have NOT relocated and have Family history and identity > 70
         heritage_refusal = self.df[
             (self.df["Has_Relocated"] == False) & 
             (self.df["Family history and identity"] > 70)
         ].shape[0]
         heritage_pct = (heritage_refusal / self.total_population) * 100
 
-        # 4. Housing Demolition Anxiety / Panic Rate
-        # Agents with Fear of housing demolition > 70
         anxiety = self.df[self.df["Fear of housing demolition"] > 70].shape[0]
         anxiety_pct = (anxiety / self.total_population) * 100
 
-        # 5. Relocation Readiness / "Early Adopters"
-        # Agents who have already relocated AND Preference and adaptation > 60
         ready = self.df[
             (self.df["Has_Relocated"] == True) & 
             (self.df["Preference and adaptation"] > 60)
@@ -475,6 +465,59 @@ def get_mock_clusters():
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
+# ---------- Dark Mode Toggle ----------
+if 'dark_mode' not in st.session_state:
+    st.session_state.dark_mode = False
+
+def apply_dark_mode():
+    if st.session_state.dark_mode:
+        dark_css = """
+        <style>
+            /* Main background and text */
+            .stApp, .main, .stSidebar, .st-expander, .stMetric, .stDataFrame {
+                background-color: #1E1E1E;
+                color: #E0E0E0;
+            }
+            /* Metric cards */
+            div[data-testid="metric-container"] {
+                background-color: #2C2C2C;
+                border: 1px solid #444;
+                border-radius: 8px;
+            }
+            div[data-testid="metric-container"] > label {
+                color: #E0E0E0 !important;
+            }
+            /* Sidebar */
+            .stSidebar {
+                background-color: #252525;
+            }
+            /* Expanders */
+            .streamlit-expanderHeader {
+                color: #E0E0E0;
+            }
+            /* Buttons */
+            .stButton>button {
+                background-color: #3A3A3A;
+                color: #E0E0E0;
+                border: 1px solid #555;
+            }
+            /* Sliders */
+            .stSlider>div>div>div>div {
+                color: #E0E0E0;
+            }
+            /* Captions and small text */
+            .caption, .stCaption {
+                color: #B0B0B0;
+            }
+            /* Keep the original PAGASA gauge colors untouched – they are inline, no CSS override needed */
+        </style>
+        """
+        st.markdown(dark_css, unsafe_allow_html=True)
+
+# Apply the dark mode CSS if toggled
+apply_dark_mode()
+
+# ---------- Session State ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
@@ -491,6 +534,9 @@ if 'twin' not in st.session_state:
 
 # ---------- Sidebar ----------
 with st.sidebar:
+    # Dark mode toggle at the very top
+    st.toggle("🌙 Dark Mode", key="dark_mode", on_change=st.rerun)  # triggers a rerun on toggle
+
     st.header("📊 Data Upload & Calibration")
 
     cac_vars = ['Challenge', 'Acceptance', 'Commitment']
@@ -780,7 +826,6 @@ adv_col3.metric("Heritage‑Based Refusal", f"{advanced['Heritage-Based Refusal 
 adv_col4.metric("Demolition Anxiety", f"{advanced['Demolition Anxiety (%)']:.1f}%")
 adv_col5.metric("Relocation Readiness", f"{advanced['Relocation Readiness (%)']:.1f}%")
 
-# Interpretations for advanced metrics
 adv_interpretations = []
 if advanced['Proactive Preparedness (%)'] > 60:
     adv_interpretations.append("🟢 **High proactive preparedness**: many residents are already taking independent action – leverage them as community champions.")
@@ -1015,7 +1060,6 @@ else:
         "providing a favourable environment for new programs and policies."
     )
 
-# Additional advanced insights
 if advanced['Proactive Preparedness (%)'] > 60:
     insight_parts.append("🛠️ **High proactive preparedness** – community champions exist; engage them as partners.")
 if advanced['LGU Trust & Cooperation (%)'] < 40:
