@@ -783,8 +783,8 @@ resist_pct = metrics['Resisting LGU (%)']
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
 st.image(
     "https://host.javanielsen.dk/wp-content/uploads/2015/08/tagoloanmuni.jpg",
-    caption="Tagoloan Municipality – barangay boundaries. (For a flood‑prone overlay, replace with a custom map.)",
-    use_container_width=True
+    caption="Barangay boundaries of Tagoloan, Misamis Oriental",
+    width=700
 )
 
 # ---- Basic Behavioral Outcomes ----
