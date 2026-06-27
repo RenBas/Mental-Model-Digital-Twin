@@ -523,7 +523,7 @@ if 'twin' not in st.session_state:
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    st.toggle("🌙 Dark Mode", key="dark_mode", on_change=st.rerun)
+    st.toggle("🌙 Dark Mode", key="dark_mode")
 
     st.header("📊 Data Upload & Calibration")
     cac_vars = ['Challenge', 'Acceptance', 'Commitment']
