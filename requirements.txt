@@ -5,3 +5,4 @@ plotly
 networkx
 scikit-learn
 Pillow
+geopandas
