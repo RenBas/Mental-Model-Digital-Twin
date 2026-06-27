@@ -733,8 +733,6 @@ reloc_pct = metrics['Projected to Relocate (%)']
 evac_pct = metrics['Evacuating (%)']
 resist_pct = metrics['Resisting LGU (%)']
 
-st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
-
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
 st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
