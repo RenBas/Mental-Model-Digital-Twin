@@ -743,6 +743,10 @@ st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Pop
 barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
 flood_map_url = "https://i.imgur.com/y0wy3hf.jpg"
 
+# ---- Overlay Map ----
+barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
+flood_map_url = "https://i.imgur.com/y0wy3hf.jpeg"   # correct direct link
+
 map_html = f"""
 <div style="position: relative; width: 700px; margin: auto;">
     <img src="{barangay_map_url}" style="width: 100%; display: block;" alt="Barangay boundaries">
@@ -751,16 +755,16 @@ map_html = f"""
         top: 0;
         left: 0;
         width: 100%;
+        height: auto;
         opacity: {flood_opacity};
         mix-blend-mode: multiply;
-    " alt="Flood hazard overlay">
+    " alt="Flood hazard overlay" onerror="this.style.display='none'">
 </div>
 <p style="text-align: center; font-size: 0.9rem;">
     Tagoloan Municipality – barangay boundaries with flood hazard overlay (opacity {flood_opacity:.0%})
 </p>
 """
 st.markdown(map_html, unsafe_allow_html=True)
-
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
 st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
