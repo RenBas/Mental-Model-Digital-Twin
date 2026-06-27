@@ -461,6 +461,7 @@ col_map = {
 # 7. PAGASA ADVISORY LIVE GAUGE FUNCTIONS
 # ==============================================================================
 
+@st.cache_data(ttl=3600)   # auto-refresh every 1 hour
 def fetch_pagasa_advisory():
     """Fetch the PAGASA Tagoloan River Basin advisory and return a dict with severity and timestamp."""
     url = "https://www.pagasa.dost.gov.ph/flood/tagoloan"
@@ -470,33 +471,26 @@ def fetch_pagasa_advisory():
         if response.status_code != 200:
             return None
         soup = BeautifulSoup(response.content, "html.parser")
-        # Extract the main text (advisory content)
         content_div = soup.find("div", class_="entry-content")
         if not content_div:
-            # fallback: try to find any div with advisory text
             content_div = soup.find("body")
         text = content_div.get_text(separator="\n") if content_div else soup.get_text()
 
-        # Find the issuance timestamp
         issued_match = re.search(r"ISSUED AT (.*?)\n", text)
         timestamp_str = issued_match.group(1).strip() if issued_match else "Unknown time"
 
-        # Find observed and forecast rainfall descriptions
         obs_match = re.search(r"OBSERVED 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
         forecast_match = re.search(r"FORECAST 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
         observed_text = obs_match.group(1).strip() if obs_match else ""
         forecast_text = forecast_match.group(1).strip() if forecast_match else ""
 
-        # Choose forecast as primary; fallback to observed
         rainfall_desc = forecast_text if forecast_text else observed_text
         if not rainfall_desc:
             return None
 
-        # Determine severity from keywords
         severity = None
         label = "Unknown"
         color = "grey"
-        # Mapping: keywords to (severity, color, label)
         if re.search(r"\b(torrential|intense|extreme)\b", rainfall_desc, re.IGNORECASE):
             severity = 0.90
             color = "red"
@@ -507,14 +501,13 @@ def fetch_pagasa_advisory():
             label = "Heavy Rain (Orange)"
         elif re.search(r"\bmoderate\b", rainfall_desc, re.IGNORECASE):
             severity = 0.35
-            color = "#FFC107"  # yellow
+            color = "#FFC107"
             label = "Moderate Rain (Yellow)"
         elif re.search(r"\blight\b", rainfall_desc, re.IGNORECASE):
             severity = 0.10
             color = "green"
             label = "Light Rain (Green)"
         else:
-            # No keyword found
             return None
 
         return {
@@ -524,8 +517,7 @@ def fetch_pagasa_advisory():
             "timestamp": timestamp_str,
             "raw_text": rainfall_desc
         }
-    except Exception as e:
-        st.error(f"Error fetching PAGASA advisory: {e}")
+    except Exception:
         return None
 
 # ==============================================================================
@@ -588,8 +580,6 @@ if 'twin' not in st.session_state:
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
     st.session_state.raw_data = None
-    st.session_state.pagasa_severity = None
-    st.session_state.pagasa_timestamp = ""
     st.session_state.disable_flashing = False
 
 # ---------- Sidebar ----------
@@ -744,45 +734,22 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("🌧️ PAGASA Advisory (Tagoloan River Basin)")
-    # Refresh advisory button
-    if st.button("🔄 Refresh Live Advisory"):
-        advisory = fetch_pagasa_advisory()
-        if advisory:
-            st.session_state.pagasa_severity = advisory["severity"]
-            st.session_state.pagasa_timestamp = advisory["timestamp"]
-            st.session_state.pagasa_label = advisory["label"]
-            st.session_state.pagasa_color = advisory["color"]
-            st.session_state.pagasa_raw = advisory["raw_text"]
-        else:
-            st.session_state.pagasa_severity = None
-            st.session_state.pagasa_timestamp = "Advisory unavailable"
-            st.session_state.pagasa_label = "No data"
-            st.session_state.pagasa_color = "grey"
-            st.session_state.pagasa_raw = ""
 
-    # If we haven't fetched yet, do it on first load
-    if "pagasa_severity" not in st.session_state:
-        advisory = fetch_pagasa_advisory()
-        if advisory:
-            st.session_state.pagasa_severity = advisory["severity"]
-            st.session_state.pagasa_timestamp = advisory["timestamp"]
-            st.session_state.pagasa_label = advisory["label"]
-            st.session_state.pagasa_color = advisory["color"]
-            st.session_state.pagasa_raw = advisory["raw_text"]
-        else:
-            st.session_state.pagasa_severity = None
-            st.session_state.pagasa_timestamp = "Advisory unavailable"
-            st.session_state.pagasa_label = "No data"
-            st.session_state.pagasa_color = "grey"
-            st.session_state.pagasa_raw = ""
+    # Fetch advisory (cached – updates automatically every hour)
+    advisory = fetch_pagasa_advisory()
 
-    # Display live gauge
-    severity = st.session_state.get("pagasa_severity")
-    ts = st.session_state.get("pagasa_timestamp", "Not available")
-    label = st.session_state.get("pagasa_label", "Unknown")
-    color = st.session_state.get("pagasa_color", "grey")
+    if advisory:
+        severity = advisory["severity"]
+        ts = advisory["timestamp"]
+        label = advisory["label"]
+        color = advisory["color"]
+    else:
+        severity = None
+        ts = "Advisory unavailable"
+        label = "No data"
+        color = "grey"
 
-    # Determine flashing class based on severity
+    # Flashing and warning icon logic
     flash_class = ""
     if severity is not None and not st.session_state.disable_flashing:
         if severity >= 0.60:
@@ -790,7 +757,6 @@ with st.sidebar:
         else:
             flash_class = "slow-flash"
 
-    # Warning icon for high severity
     warning_icon = "⚠️" if severity and severity >= 0.60 else ""
 
     gauge_html = f"""
@@ -825,7 +791,11 @@ with st.sidebar:
     """
     st.markdown(gauge_html, unsafe_allow_html=True)
 
-    # Disable flashing checkbox
+    # Manual refresh button (forces a fresh fetch, bypasses cache)
+    if st.button("🔄 Refresh Live Advisory"):
+        fetch_pagasa_advisory.clear()
+        st.rerun()
+
     st.session_state.disable_flashing = st.checkbox("Disable flashing", value=st.session_state.disable_flashing, key="disable_flash_check")
 
     st.markdown("---")
