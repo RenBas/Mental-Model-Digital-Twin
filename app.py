@@ -133,6 +133,8 @@ class PopulationGenerator:
 
     def generate_population(self, total_population_size, cluster_profiles, engine_nodes):
         agents = []
+        if total_population_size == 0 or not cluster_profiles:
+            return agents   # return empty list
         current_agent_id = 1
         cluster_counts = {}
         assigned_total = 0
@@ -271,6 +273,8 @@ class CommunityAnalytics:
         }
 
     def get_cluster_breakdown(self):
+        if self.total_population == 0:
+            return pd.DataFrame(columns=['Cluster', 'Population Count', 'Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %'])
         cluster_stats = self.df.groupby('Cluster').agg(
             Count=('Agent_ID', 'count'),
             Relocated=('Has_Relocated', 'mean'),
@@ -303,7 +307,7 @@ class DigitalTwin:
         self.damping_factor = damping_factor
         self.flood_severity = flood_severity
         self.lgu_threat = lgu_threat
-        self.cluster_profiles = cluster_profiles
+        self.cluster_profiles = cluster_profiles if cluster_profiles else {}
         self.total_population = total_population
         self.step_count = 0
         self.history = []
@@ -321,6 +325,8 @@ class DigitalTwin:
         self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
 
     def step(self):
+        if self.total_population == 0:
+            return
         net_influences = {name: 0.0 for name in self.nodes}
         for target_name, sources in self.incoming_edges.items():
             for source_name, coeff in sources:
@@ -447,19 +453,6 @@ col_map = {
     "Family history and identity": "Family_history_identity"
 }
 
-def get_mock_clusters():
-    return {
-        "Transition-Seeking Residents": ClusterArchetype(
-            "Transition-Seeking Residents", 0.45,
-            {n: 65.0 for n in base_nodes.keys()}, "Desire for relocation"),
-        "Anxious Property Owners": ClusterArchetype(
-            "Anxious Property Owners", 0.30,
-            {n: 40.0 for n in base_nodes.keys()}, "Fear of housing demolition"),
-        "Resilient Flood Adapters": ClusterArchetype(
-            "Resilient Flood Adapters", 0.25,
-            {n: 50.0 for n in base_nodes.keys()}, "Coping during flooding")
-    }
-
 # ==============================================================================
 # 7. STREAMLIT APP
 # ==============================================================================
@@ -511,8 +504,8 @@ if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
         edges=base_edges,
-        cluster_profiles=get_mock_clusters(),
-        total_population=140,
+        cluster_profiles={},          # empty – no mock data
+        total_population=0,           # zero until real data is uploaded
         flood_severity=0.0,
         lgu_threat=False
     )
@@ -646,24 +639,27 @@ with st.sidebar:
                     st.success(f"Model recalibrated! K = {chosen_k}, population = {len(df_filtered)}. Ready to simulate.")
                     st.rerun()
     else:
-        st.info("📝 Using mock data (N=140). Upload a 38‑column CSV to calibrate with real survey data.")
+        st.info("📝 Upload a 38‑column CSV to begin.")
 
     st.markdown("---")
     st.header("🎛️ Simulation Controls")
     steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
-    if st.button("▶️ Run", use_container_width=True, type="primary"):
+    run_disabled = (st.session_state.twin.total_population == 0)
+    if st.button("▶️ Run", use_container_width=True, type="primary", disabled=run_disabled):
         for _ in range(steps_to_run):
             st.session_state.twin.step()
         st.rerun()
-    if st.button("🔄 Reset Simulation", use_container_width=True):
+    if st.button("🔄 Reset Simulation", use_container_width=True, disabled=run_disabled):
         st.session_state.twin.reset()
         st.rerun()
 
     st.markdown("---")
     st.header("⚙️ Settings")
-    new_pop = st.slider("Total Residents to Simulate", 10, 5000, st.session_state.twin.total_population, key="pop_slider",
+    pop_disabled = (len(st.session_state.twin.cluster_profiles) == 0)
+    new_pop = st.slider("Total Residents to Simulate", 10, 5000, st.session_state.twin.total_population,
+                        key="pop_slider", disabled=pop_disabled,
                         help="Changing this value immediately regenerates the population.")
-    if new_pop != st.session_state.twin.total_population:
+    if not pop_disabled and new_pop != st.session_state.twin.total_population:
         st.session_state.twin.update_population_size(new_pop)
         st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
         st.rerun()
@@ -694,7 +690,7 @@ with st.sidebar:
     st.session_state.twin.flood_severity = flood_sev
     lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
     if flood_sev != st.session_state.twin.flood_severity or lgu_threat != st.session_state.twin.lgu_threat:
-        if st.button("Apply Environmental Triggers"):
+        if st.button("Apply Environmental Triggers", disabled=run_disabled):
             st.session_state.twin.reset(new_flood_severity=flood_sev, new_lgu_threat=lgu_threat)
             st.rerun()
 
@@ -716,7 +712,7 @@ with st.sidebar:
             node.baseline_cac['Acceptance'] = new_ac
             node.baseline_cac['Commitment'] = new_co
             node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
-    if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True):
+    if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True, disabled=run_disabled):
         st.session_state.twin.reset()
         st.rerun()
 
@@ -735,41 +731,48 @@ resist_pct = metrics['Resisting LGU (%)']
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
-st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
+if pop == 0:
+    st.info("Upload and calibrate your survey data to populate the indicators.")
+else:
+    st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Population", f"{pop:,}")
 col2.metric("Projected to Relocate", f"{reloc_pct:.1f}%")
 col3.metric("Evacuating", f"{evac_pct:.1f}%")
 col4.metric("Resisting LGU", f"{resist_pct:.1f}%")
 
-snapshot_parts = []
-if reloc_pct > 30:
-    snapshot_parts.append(f"High relocation pressure ({reloc_pct:.1f}%) indicates strong desire to move.")
-elif reloc_pct > 10:
-    snapshot_parts.append(f"Moderate relocation interest ({reloc_pct:.1f}%) shows some openness to resettlement.")
-else:
-    snapshot_parts.append(f"Low relocation intent ({reloc_pct:.1f}%) means most residents prefer to stay.")
+if pop > 0:
+    snapshot_parts = []
+    if reloc_pct > 30:
+        snapshot_parts.append(f"High relocation pressure ({reloc_pct:.1f}%) indicates strong desire to move.")
+    elif reloc_pct > 10:
+        snapshot_parts.append(f"Moderate relocation interest ({reloc_pct:.1f}%) shows some openness to resettlement.")
+    else:
+        snapshot_parts.append(f"Low relocation intent ({reloc_pct:.1f}%) means most residents prefer to stay.")
 
-if evac_pct > 80:
-    snapshot_parts.append(f"Very high evacuation readiness ({evac_pct:.1f}%) suggests the community is prepared to respond to warnings.")
-elif evac_pct > 50:
-    snapshot_parts.append(f"Moderate evacuation readiness ({evac_pct:.1f}%) may need reinforcement.")
-else:
-    snapshot_parts.append(f"Low evacuation readiness ({evac_pct:.1f}%) reveals a critical gap in disaster preparedness.")
+    if evac_pct > 80:
+        snapshot_parts.append(f"Very high evacuation readiness ({evac_pct:.1f}%) suggests the community is prepared to respond to warnings.")
+    elif evac_pct > 50:
+        snapshot_parts.append(f"Moderate evacuation readiness ({evac_pct:.1f}%) may need reinforcement.")
+    else:
+        snapshot_parts.append(f"Low evacuation readiness ({evac_pct:.1f}%) reveals a critical gap in disaster preparedness.")
 
-if resist_pct > 20:
-    snapshot_parts.append(f"Significant LGU resistance ({resist_pct:.1f}%) signals friction.")
-elif resist_pct > 5:
-    snapshot_parts.append(f"Low‑to‑moderate resistance ({resist_pct:.1f}%) — monitor clusters contributing to it.")
-else:
-    snapshot_parts.append(f"Negligible resistance ({resist_pct:.1f}%) — community is largely cooperative.")
+    if resist_pct > 20:
+        snapshot_parts.append(f"Significant LGU resistance ({resist_pct:.1f}%) signals friction.")
+    elif resist_pct > 5:
+        snapshot_parts.append(f"Low‑to‑moderate resistance ({resist_pct:.1f}%) — monitor clusters contributing to it.")
+    else:
+        snapshot_parts.append(f"Negligible resistance ({resist_pct:.1f}%) — community is largely cooperative.")
 
-st.caption(f"📊 **{barangay_title} snapshot:** {' '.join(snapshot_parts)}")
+    st.caption(f"📊 **{barangay_title} snapshot:** {' '.join(snapshot_parts)}")
 
 # ---- Advanced Behavioral Indicators ----
 st.markdown("---")
 st.subheader("Advanced Community Indicators")
-st.caption("Derived from the CAC constructs and regression pathways, these metrics reveal deeper community dynamics.")
+if pop == 0:
+    st.info("These indicators will populate after data calibration.")
+else:
+    st.caption("Derived from the CAC constructs and regression pathways, these metrics reveal deeper community dynamics.")
 adv_col1, adv_col2, adv_col3, adv_col4, adv_col5 = st.columns(5)
 adv_col1.metric("Proactive Preparedness", f"{advanced['Proactive Preparedness (%)']:.1f}%")
 adv_col2.metric("LGU Trust & Cooperation", f"{advanced['LGU Trust & Cooperation (%)']:.1f}%")
@@ -777,41 +780,42 @@ adv_col3.metric("Heritage‑Based Refusal", f"{advanced['Heritage-Based Refusal 
 adv_col4.metric("Demolition Anxiety", f"{advanced['Demolition Anxiety (%)']:.1f}%")
 adv_col5.metric("Relocation Readiness", f"{advanced['Relocation Readiness (%)']:.1f}%")
 
-adv_interpretations = []
-if advanced['Proactive Preparedness (%)'] > 60:
-    adv_interpretations.append("🟢 **High proactive preparedness**: many residents are already taking independent action – leverage them as community champions.")
-elif advanced['Proactive Preparedness (%)'] < 30:
-    adv_interpretations.append("🔴 **Low proactive preparedness**: grassroots awareness campaigns are urgently needed.")
-else:
-    adv_interpretations.append("🟡 **Moderate proactive preparedness**: continue building local capacity.")
+if pop > 0:
+    adv_interpretations = []
+    if advanced['Proactive Preparedness (%)'] > 60:
+        adv_interpretations.append("🟢 **High proactive preparedness**: many residents are already taking independent action – leverage them as community champions.")
+    elif advanced['Proactive Preparedness (%)'] < 30:
+        adv_interpretations.append("🔴 **Low proactive preparedness**: grassroots awareness campaigns are urgently needed.")
+    else:
+        adv_interpretations.append("🟡 **Moderate proactive preparedness**: continue building local capacity.")
 
-if advanced['LGU Trust & Cooperation (%)'] > 60:
-    adv_interpretations.append("🟢 **Strong LGU trust**: policies will likely face less friction and higher compliance.")
-elif advanced['LGU Trust & Cooperation (%)'] < 30:
-    adv_interpretations.append("🔴 **Weak LGU trust**: any new program will encounter resistance; invest in trust‑building first.")
-else:
-    adv_interpretations.append("🟡 **Moderate trust**: maintain transparency to avoid erosion.")
+    if advanced['LGU Trust & Cooperation (%)'] > 60:
+        adv_interpretations.append("🟢 **Strong LGU trust**: policies will likely face less friction and higher compliance.")
+    elif advanced['LGU Trust & Cooperation (%)'] < 30:
+        adv_interpretations.append("🔴 **Weak LGU trust**: any new program will encounter resistance; invest in trust‑building first.")
+    else:
+        adv_interpretations.append("🟡 **Moderate trust**: maintain transparency to avoid erosion.")
 
-if advanced['Heritage-Based Refusal (%)'] > 30:
-    adv_interpretations.append("⚠️ **High heritage‑based refusal**: monetary incentives alone won't work; consider community‑relocation or psychosocial support.")
-else:
-    adv_interpretations.append("🟢 **Low heritage refusal**: relocation barriers are more practical than emotional.")
+    if advanced['Heritage-Based Refusal (%)'] > 30:
+        adv_interpretations.append("⚠️ **High heritage‑based refusal**: monetary incentives alone won't work; consider community‑relocation or psychosocial support.")
+    else:
+        adv_interpretations.append("🟢 **Low heritage refusal**: relocation barriers are more practical than emotional.")
 
-if advanced['Demolition Anxiety (%)'] > 30:
-    adv_interpretations.append("🔴 **Elevated demolition anxiety**: immediate housing security guarantees and MHPSS are critical.")
-elif advanced['Demolition Anxiety (%)'] > 10:
-    adv_interpretations.append("🟡 **Moderate demolition anxiety**: monitor closely, especially if demolition threat is active.")
-else:
-    adv_interpretations.append("🟢 **Low demolition anxiety**: community feels relatively secure about housing.")
+    if advanced['Demolition Anxiety (%)'] > 30:
+        adv_interpretations.append("🔴 **Elevated demolition anxiety**: immediate housing security guarantees and MHPSS are critical.")
+    elif advanced['Demolition Anxiety (%)'] > 10:
+        adv_interpretations.append("🟡 **Moderate demolition anxiety**: monitor closely, especially if demolition threat is active.")
+    else:
+        adv_interpretations.append("🟢 **Low demolition anxiety**: community feels relatively secure about housing.")
 
-if advanced['Relocation Readiness (%)'] > 20:
-    adv_interpretations.append("🟢 **High relocation readiness**: a pool of early adopters exists – target them for pilot resettlement programs.")
-elif advanced['Relocation Readiness (%)'] > 5:
-    adv_interpretations.append("🟡 **Moderate readiness**: some residents are prepared; identify and encourage them.")
-else:
-    adv_interpretations.append("🔴 **Low readiness**: psychological adaptation to relocation is minimal; phased engagement is necessary.")
+    if advanced['Relocation Readiness (%)'] > 20:
+        adv_interpretations.append("🟢 **High relocation readiness**: a pool of early adopters exists – target them for pilot resettlement programs.")
+    elif advanced['Relocation Readiness (%)'] > 5:
+        adv_interpretations.append("🟡 **Moderate readiness**: some residents are prepared; identify and encourage them.")
+    else:
+        adv_interpretations.append("🔴 **Low readiness**: psychological adaptation to relocation is minimal; phased engagement is necessary.")
 
-st.caption(" ".join(adv_interpretations))
+    st.caption(" ".join(adv_interpretations))
 
 st.markdown("---")
 
@@ -848,50 +852,54 @@ fig_net = go.Figure(data=[edge_trace, node_trace],
                                      yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 st.plotly_chart(fig_net, use_container_width=True)
 
-high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
-low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
-if high_nodes:
-    st.caption(f"🔵 **Strong drivers in {barangay_title}:** {', '.join(high_nodes)} show high intensity, which can be leveraged for positive behavioral change.")
-if low_nodes:
-    st.caption(f"🟡 **Weak areas in {barangay_title}:** {', '.join(low_nodes)} are psychologically fragile; interventions here may have the greatest impact.")
-if not high_nodes and not low_nodes:
-    st.caption(f"⚪ **Balanced profile in {barangay_title}:** all nodes are in the moderate range, suggesting a stable psychological landscape.")
+if pop > 0:
+    high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
+    low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
+    if high_nodes:
+        st.caption(f"🔵 **Strong drivers in {barangay_title}:** {', '.join(high_nodes)} show high intensity, which can be leveraged for positive behavioral change.")
+    if low_nodes:
+        st.caption(f"🟡 **Weak areas in {barangay_title}:** {', '.join(low_nodes)} are psychologically fragile; interventions here may have the greatest impact.")
+    if not high_nodes and not low_nodes:
+        st.caption(f"⚪ **Balanced profile in {barangay_title}:** all nodes are in the moderate range, suggesting a stable psychological landscape.")
 
 st.markdown("---")
 
 st.subheader("Behavioral Distribution by Cluster")
 cluster_df = twin.analytics.get_cluster_breakdown()
-st.caption("Overall metrics are the weighted average of these per‑cluster percentages. Population counts shown in the table below.")
-
-fig_cluster = go.Figure()
-behaviors = ['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %']
-colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA']
-for i, beh in enumerate(behaviors):
-    fig_cluster.add_trace(go.Bar(
-        x=cluster_df['Cluster'],
-        y=cluster_df[beh],
-        name=beh,
-        text=[f"{v:.1f}%" for v in cluster_df[beh]],
-        textposition='outside',
-        marker_color=colors[i]
-    ))
-fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Cluster',
-                          yaxis_title='Percentage', height=450)
-st.plotly_chart(fig_cluster, use_container_width=True)
-
-dominating_clusters = []
-for _, row in cluster_df.iterrows():
-    if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 80 or row['Resisting %'] > 30:
-        dominating_clusters.append(row['Cluster'])
-if dominating_clusters:
-    st.caption(f"🔍 **Clusters driving {barangay_title} outcomes:** {', '.join(dominating_clusters)} have notably high behavioral percentages. Targeting these groups can shift aggregate outcomes significantly.")
+if pop == 0:
+    st.info("No clusters yet. Upload and recalibrate data.")
 else:
-    st.caption(f"🔍 **Balanced cluster behavior in {barangay_title}:** no single cluster dominates the outcomes, indicating a mixed community profile.")
+    st.caption("Overall metrics are the weighted average of these per‑cluster percentages. Population counts shown in the table below.")
 
-st.markdown("**Cluster populations:**")
-pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
-st.dataframe(pop_summary.T, use_container_width=True)
-st.caption("The sum of these counts equals the total population shown above.")
+    fig_cluster = go.Figure()
+    behaviors = ['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %']
+    colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA']
+    for i, beh in enumerate(behaviors):
+        fig_cluster.add_trace(go.Bar(
+            x=cluster_df['Cluster'],
+            y=cluster_df[beh],
+            name=beh,
+            text=[f"{v:.1f}%" for v in cluster_df[beh]],
+            textposition='outside',
+            marker_color=colors[i]
+        ))
+    fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Cluster',
+                              yaxis_title='Percentage', height=450)
+    st.plotly_chart(fig_cluster, use_container_width=True)
+
+    dominating_clusters = []
+    for _, row in cluster_df.iterrows():
+        if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 80 or row['Resisting %'] > 30:
+            dominating_clusters.append(row['Cluster'])
+    if dominating_clusters:
+        st.caption(f"🔍 **Clusters driving {barangay_title} outcomes:** {', '.join(dominating_clusters)} have notably high behavioral percentages. Targeting these groups can shift aggregate outcomes significantly.")
+    else:
+        st.caption(f"🔍 **Balanced cluster behavior in {barangay_title}:** no single cluster dominates the outcomes, indicating a mixed community profile.")
+
+    st.markdown("**Cluster populations:**")
+    pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
+    st.dataframe(pop_summary.T, use_container_width=True)
+    st.caption("The sum of these counts equals the total population shown above.")
 
 if st.session_state.data_calibrated and st.session_state.respondent_clusters is not None:
     st.markdown("---")
@@ -915,11 +923,12 @@ st.subheader("Cluster Profiles (K-Means Nomenclature)")
 if st.session_state.data_calibrated:
     st.success(f"Profiles extracted from uploaded survey data (K={len(twin.cluster_profiles)}).")
 else:
-    st.info("Showing mock profiles. Upload and recalibrate for data‑driven names.")
+    st.info("No profiles yet. Upload and recalibrate data.")
 profiles = [{"Cluster": name, "Share": f"{p.population_ratio*100:.1f}%",
              "Dominant Driver": p.dominant_driver}
             for name, p in twin.cluster_profiles.items()]
-st.dataframe(pd.DataFrame(profiles), use_container_width=True, hide_index=True)
+if profiles:
+    st.dataframe(pd.DataFrame(profiles), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.subheader("CAC Breakdown (Bubble: Commitment)")
@@ -927,134 +936,139 @@ cac_avgs = twin.analytics.get_cac_averages(col_map)
 scatter = [{"Construct": node, "Challenge": cac_avgs[f"{node} (Challenge)"],
             "Acceptance": cac_avgs[f"{node} (Acceptance)"],
             "Commitment": cac_avgs[f"{node} (Commitment)"]} for node in col_map]
-fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
-                     size="Commitment", color="Construct", size_max=60,
-                     title="Community CAC Profile")
-st.plotly_chart(fig_cac, use_container_width=True)
+if pop == 0:
+    st.info("CAC data will appear after calibration.")
+else:
+    fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
+                         size="Commitment", color="Construct", size_max=60,
+                         title="Community CAC Profile")
+    st.plotly_chart(fig_cac, use_container_width=True)
 
-high_challenge = [d['Construct'] for d in scatter if d['Challenge'] > 60]
-low_acceptance = [d['Construct'] for d in scatter if d['Acceptance'] < 40]
-if high_challenge:
-    st.caption(f"🔴 **High Challenge in {barangay_title}:** {', '.join(high_challenge)} – residents perceive significant barriers, requiring policy support to lower perceived difficulty.")
-if low_acceptance:
-    st.caption(f"🟠 **Low Acceptance in {barangay_title}:** {', '.join(low_acceptance)} – these areas lack community buy‑in; awareness campaigns or incentives may be needed.")
-if not high_challenge and not low_acceptance:
-    st.caption(f"⚪ **Balanced CAC profile in {barangay_title}:** all constructs are within moderate range, indicating a generally stable psychological state.")
+    high_challenge = [d['Construct'] for d in scatter if d['Challenge'] > 60]
+    low_acceptance = [d['Construct'] for d in scatter if d['Acceptance'] < 40]
+    if high_challenge:
+        st.caption(f"🔴 **High Challenge in {barangay_title}:** {', '.join(high_challenge)} – residents perceive significant barriers, requiring policy support to lower perceived difficulty.")
+    if low_acceptance:
+        st.caption(f"🟠 **Low Acceptance in {barangay_title}:** {', '.join(low_acceptance)} – these areas lack community buy‑in; awareness campaigns or incentives may be needed.")
+    if not high_challenge and not low_acceptance:
+        st.caption(f"⚪ **Balanced CAC profile in {barangay_title}:** all constructs are within moderate range, indicating a generally stable psychological state.")
 
 st.markdown("---")
 st.subheader("Policy Insights & Actionable Recommendations")
-
-insight_parts = []
-insight_parts.append(
-    f"**{barangay_title}** has a simulated population of **{pop:,} residents**. "
-    f"Currently, **{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
-    f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
-    f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
-    f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
-    f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
-    f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
-    f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
-)
-
-if reloc_pct > 30:
-    insight_parts.append(
-        f"🔴 **High relocation pressure ({reloc_pct:.1f}%):** This indicates strong desire or feasibility for moving, "
-        "likely driven by elevated 'Desire for relocation' and 'Feasibility of relocation' scores in the network graph. "
-        "If unmanaged, this could lead to unplanned out‑migration or strain on resettlement programs."
-    )
-elif reloc_pct > 10:
-    insight_parts.append(
-        f"🟡 **Moderate relocation interest ({reloc_pct:.1f}%):** A notable segment considers moving, "
-        "but most residents prefer to stay. The cluster breakdown can pinpoint which groups are relocation‑ready "
-        "so that assistance can be targeted without triggering unnecessary displacement."
-    )
+if pop == 0:
+    st.info("Insights will appear after data is loaded and calibrated.")
 else:
+    insight_parts = []
     insight_parts.append(
-        f"🟢 **Low relocation intent ({reloc_pct:.1f}%):** The majority of residents are rooted in place. "
-        "Policies should focus on in‑situ adaptation, livelihood support, and strengthening local capacities "
-        "rather than resettlement."
+        f"**{barangay_title}** has a simulated population of **{pop:,} residents**. "
+        f"Currently, **{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
+        f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
+        f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
+        f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
+        f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
+        f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
+        f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
     )
 
-if evac_pct > 80:
-    insight_parts.append(
-        f"🔵 **Very high evacuation readiness ({evac_pct:.1f}%):** Almost the entire community is willing to evacuate "
-        "when warned. This reflects strong 'Coping during flooding' and 'Prevention and flooding' scores. "
-        "Maintain early warning systems and conduct regular drills to sustain this readiness."
-    )
-elif evac_pct > 50:
-    insight_parts.append(
-        f"🟡 **Moderate evacuation readiness ({evac_pct:.1f}%):** More than half would evacuate, but a significant "
-        "minority remains hesitant. The cluster chart highlights which groups are least likely to evacuate; "
-        "targeted awareness campaigns and incentives could raise this figure."
-    )
-else:
-    insight_parts.append(
-        f"🔴 **Low evacuation readiness ({evac_pct:.1f}%):** A majority of residents may not respond to evacuation orders. "
-        "This is a critical gap in disaster preparedness. Strengthen 'Coping during flooding' and 'Viewpoints towards LGU' "
-        "through community engagement and trust‑building, as suggested by the network graph."
-    )
+    if reloc_pct > 30:
+        insight_parts.append(
+            f"🔴 **High relocation pressure ({reloc_pct:.1f}%):** This indicates strong desire or feasibility for moving, "
+            "likely driven by elevated 'Desire for relocation' and 'Feasibility of relocation' scores in the network graph. "
+            "If unmanaged, this could lead to unplanned out‑migration or strain on resettlement programs."
+        )
+    elif reloc_pct > 10:
+        insight_parts.append(
+            f"🟡 **Moderate relocation interest ({reloc_pct:.1f}%):** A notable segment considers moving, "
+            "but most residents prefer to stay. The cluster breakdown can pinpoint which groups are relocation‑ready "
+            "so that assistance can be targeted without triggering unnecessary displacement."
+        )
+    else:
+        insight_parts.append(
+            f"🟢 **Low relocation intent ({reloc_pct:.1f}%):** The majority of residents are rooted in place. "
+            "Policies should focus on in‑situ adaptation, livelihood support, and strengthening local capacities "
+            "rather than resettlement."
+        )
 
-if resist_pct > 20:
-    insight_parts.append(
-        f"🟠 **Significant LGU resistance ({resist_pct:.1f}%):** Friction is apparent, especially if a demolition threat "
-        "is active. The CAC profile likely shows high 'Fear of housing demolition' and low 'Viewpoints towards LGU'. "
-        "Immediate action: issue housing tenure guarantees and open a transparent dialogue with affected clusters."
-    )
-elif resist_pct > 5:
-    insight_parts.append(
-        f"🟡 **Low‑to‑moderate resistance ({resist_pct:.1f}%):** A small fraction resists LGU efforts. "
-        "Monitor the clusters that contribute to this resistance; even a few vocal opponents can escalate tensions."
-    )
-else:
-    insight_parts.append(
-        f"🟢 **Negligible resistance ({resist_pct:.1f}%):** The community is largely cooperative, "
-        "providing a favourable environment for new programs and policies."
-    )
+    if evac_pct > 80:
+        insight_parts.append(
+            f"🔵 **Very high evacuation readiness ({evac_pct:.1f}%):** Almost the entire community is willing to evacuate "
+            "when warned. This reflects strong 'Coping during flooding' and 'Prevention and flooding' scores. "
+            "Maintain early warning systems and conduct regular drills to sustain this readiness."
+        )
+    elif evac_pct > 50:
+        insight_parts.append(
+            f"🟡 **Moderate evacuation readiness ({evac_pct:.1f}%):** More than half would evacuate, but a significant "
+            "minority remains hesitant. The cluster chart highlights which groups are least likely to evacuate; "
+            "targeted awareness campaigns and incentives could raise this figure."
+        )
+    else:
+        insight_parts.append(
+            f"🔴 **Low evacuation readiness ({evac_pct:.1f}%):** A majority of residents may not respond to evacuation orders. "
+            "This is a critical gap in disaster preparedness. Strengthen 'Coping during flooding' and 'Viewpoints towards LGU' "
+            "through community engagement and trust‑building, as suggested by the network graph."
+        )
 
-if advanced['Proactive Preparedness (%)'] > 60:
-    insight_parts.append("🛠️ **High proactive preparedness** – community champions exist; engage them as partners.")
-if advanced['LGU Trust & Cooperation (%)'] < 40:
-    insight_parts.append("🤝 **Low LGU trust** – major barrier to policy rollouts; invest in trust‑building before launching new programs.")
-if advanced['Heritage-Based Refusal (%)'] > 30:
-    insight_parts.append("🏡 **High heritage‑based refusal** – relocation programs must include psychosocial and cultural components, not just financial aid.")
-if advanced['Demolition Anxiety (%)'] > 30:
-    insight_parts.append("⚠️ **Elevated demolition anxiety** – deploy MHPSS and issue clear housing guarantees immediately.")
-if advanced['Relocation Readiness (%)'] > 20:
-    insight_parts.append("🚀 **Relocation readiness high** – a pilot relocation program can succeed quickly if targeted at these early adopters.")
+    if resist_pct > 20:
+        insight_parts.append(
+            f"🟠 **Significant LGU resistance ({resist_pct:.1f}%):** Friction is apparent, especially if a demolition threat "
+            "is active. The CAC profile likely shows high 'Fear of housing demolition' and low 'Viewpoints towards LGU'. "
+            "Immediate action: issue housing tenure guarantees and open a transparent dialogue with affected clusters."
+        )
+    elif resist_pct > 5:
+        insight_parts.append(
+            f"🟡 **Low‑to‑moderate resistance ({resist_pct:.1f}%):** A small fraction resists LGU efforts. "
+            "Monitor the clusters that contribute to this resistance; even a few vocal opponents can escalate tensions."
+        )
+    else:
+        insight_parts.append(
+            f"🟢 **Negligible resistance ({resist_pct:.1f}%):** The community is largely cooperative, "
+            "providing a favourable environment for new programs and policies."
+        )
 
-if twin.nodes["Fear of housing demolition"].current_score > 60:
-    insight_parts.append(
-        "⚠️ **Elevated fear of demolition** – The network shows this node is particularly hot (high score). "
-        "It will likely amplify resistance and reduce relocation willingness. Address it with clear communication "
-        "about housing security before any infrastructure project."
-    )
-if twin.nodes["Viewpoints towards LGU"].current_score < 40:
-    insight_parts.append(
-        "⚠️ **Low LGU trust** – Trust is a multiplier across all behaviours. "
-        "Implement visible, participatory projects to improve this score; the network shows it directly influences "
-        "'Assistance for relocation' and 'Fear of housing demolition'."
-    )
+    if advanced['Proactive Preparedness (%)'] > 60:
+        insight_parts.append("🛠️ **High proactive preparedness** – community champions exist; engage them as partners.")
+    if advanced['LGU Trust & Cooperation (%)'] < 40:
+        insight_parts.append("🤝 **Low LGU trust** – major barrier to policy rollouts; invest in trust‑building before launching new programs.")
+    if advanced['Heritage-Based Refusal (%)'] > 30:
+        insight_parts.append("🏡 **High heritage‑based refusal** – relocation programs must include psychosocial and cultural components, not just financial aid.")
+    if advanced['Demolition Anxiety (%)'] > 30:
+        insight_parts.append("⚠️ **Elevated demolition anxiety** – deploy MHPSS and issue clear housing guarantees immediately.")
+    if advanced['Relocation Readiness (%)'] > 20:
+        insight_parts.append("🚀 **Relocation readiness high** – a pilot relocation program can succeed quickly if targeted at these early adopters.")
 
-if reloc_pct < 10 and evac_pct > 80 and resist_pct < 5:
-    insight_parts.append(
-        "✅ **Optimal profile:** This barangay exhibits high resilience with low resistance and relocation pressure. "
-        "The primary strategy is to **maintain current interventions** and monitor for any shifts, especially if "
-        "environmental conditions change."
-    )
-elif reloc_pct > 30 and evac_pct < 50:
-    insight_parts.append(
-        "⚠️ **Dual vulnerability:** Many want to leave but few would evacuate in an emergency. "
-        "This contradictory pattern suggests deep‑seated distrust or fear. Prioritise building evacuation capacity "
-        "while simultaneously offering voluntary, dignified relocation options."
-    )
+    if twin.nodes["Fear of housing demolition"].current_score > 60:
+        insight_parts.append(
+            "⚠️ **Elevated fear of demolition** – The network shows this node is particularly hot (high score). "
+            "It will likely amplify resistance and reduce relocation willingness. Address it with clear communication "
+            "about housing security before any infrastructure project."
+        )
+    if twin.nodes["Viewpoints towards LGU"].current_score < 40:
+        insight_parts.append(
+            "⚠️ **Low LGU trust** – Trust is a multiplier across all behaviours. "
+            "Implement visible, participatory projects to improve this score; the network shows it directly influences "
+            "'Assistance for relocation' and 'Fear of housing demolition'."
+        )
 
-st.markdown(" ".join(insight_parts))
-st.caption(
-    "🔗 **How to use these insights:** The network graph identifies which psychological drivers to adjust, "
-    "the cluster breakdown shows exactly which groups drive each behaviour, and the CAC bubble chart reveals "
-    "the underlying community profile. Adjust the intervention sliders or environmental triggers, then "
-    "click 'Rebuild Population' or 'Run' to test policy scenarios."
-)
+    if reloc_pct < 10 and evac_pct > 80 and resist_pct < 5:
+        insight_parts.append(
+            "✅ **Optimal profile:** This barangay exhibits high resilience with low resistance and relocation pressure. "
+            "The primary strategy is to **maintain current interventions** and monitor for any shifts, especially if "
+            "environmental conditions change."
+        )
+    elif reloc_pct > 30 and evac_pct < 50:
+        insight_parts.append(
+            "⚠️ **Dual vulnerability:** Many want to leave but few would evacuate in an emergency. "
+            "This contradictory pattern suggests deep‑seated distrust or fear. Prioritise building evacuation capacity "
+            "while simultaneously offering voluntary, dignified relocation options."
+        )
+
+    st.markdown(" ".join(insight_parts))
+    st.caption(
+        "🔗 **How to use these insights:** The network graph identifies which psychological drivers to adjust, "
+        "the cluster breakdown shows exactly which groups drive each behaviour, and the CAC bubble chart reveals "
+        "the underlying community profile. Adjust the intervention sliders or environmental triggers, then "
+        "click 'Rebuild Population' or 'Run' to test policy scenarios."
+    )
 
 st.markdown("---")
 st.subheader("Simulation Timeline")
@@ -1085,4 +1099,3 @@ else:
     st.info("Run at least two steps to see the timeline.")
 
 st.markdown("---")
-st.caption("Calibrated with baseline data from Sitio Dal-og (N=140).")
