@@ -7,6 +7,10 @@ import networkx as nx
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score
+import requests
+from bs4 import BeautifulSoup
+import re
+from datetime import datetime
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -454,7 +458,78 @@ col_map = {
 }
 
 # ==============================================================================
-# 7. STREAMLIT APP
+# 7. PAGASA ADVISORY LIVE GAUGE FUNCTIONS
+# ==============================================================================
+
+def fetch_pagasa_advisory():
+    """Fetch the PAGASA Tagoloan River Basin advisory and return a dict with severity and timestamp."""
+    url = "https://www.pagasa.dost.gov.ph/flood/tagoloan"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return None
+        soup = BeautifulSoup(response.content, "html.parser")
+        # Extract the main text (advisory content)
+        content_div = soup.find("div", class_="entry-content")
+        if not content_div:
+            # fallback: try to find any div with advisory text
+            content_div = soup.find("body")
+        text = content_div.get_text(separator="\n") if content_div else soup.get_text()
+
+        # Find the issuance timestamp
+        issued_match = re.search(r"ISSUED AT (.*?)\n", text)
+        timestamp_str = issued_match.group(1).strip() if issued_match else "Unknown time"
+
+        # Find observed and forecast rainfall descriptions
+        obs_match = re.search(r"OBSERVED 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
+        forecast_match = re.search(r"FORECAST 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
+        observed_text = obs_match.group(1).strip() if obs_match else ""
+        forecast_text = forecast_match.group(1).strip() if forecast_match else ""
+
+        # Choose forecast as primary; fallback to observed
+        rainfall_desc = forecast_text if forecast_text else observed_text
+        if not rainfall_desc:
+            return None
+
+        # Determine severity from keywords
+        severity = None
+        label = "Unknown"
+        color = "grey"
+        # Mapping: keywords to (severity, color, label)
+        if re.search(r"\b(torrential|intense|extreme)\b", rainfall_desc, re.IGNORECASE):
+            severity = 0.90
+            color = "red"
+            label = "Torrential Rain (Red)"
+        elif re.search(r"\bheavy\b", rainfall_desc, re.IGNORECASE):
+            severity = 0.65
+            color = "orange"
+            label = "Heavy Rain (Orange)"
+        elif re.search(r"\bmoderate\b", rainfall_desc, re.IGNORECASE):
+            severity = 0.35
+            color = "#FFC107"  # yellow
+            label = "Moderate Rain (Yellow)"
+        elif re.search(r"\blight\b", rainfall_desc, re.IGNORECASE):
+            severity = 0.10
+            color = "green"
+            label = "Light Rain (Green)"
+        else:
+            # No keyword found
+            return None
+
+        return {
+            "severity": severity,
+            "color": color,
+            "label": label,
+            "timestamp": timestamp_str,
+            "raw_text": rainfall_desc
+        }
+    except Exception as e:
+        st.error(f"Error fetching PAGASA advisory: {e}")
+        return None
+
+# ==============================================================================
+# 8. STREAMLIT APP
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
@@ -513,6 +588,9 @@ if 'twin' not in st.session_state:
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
     st.session_state.raw_data = None
+    st.session_state.pagasa_severity = None
+    st.session_state.pagasa_timestamp = ""
+    st.session_state.disable_flashing = False
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -664,21 +742,113 @@ with st.sidebar:
         st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
         st.rerun()
 
+    st.markdown("---")
+    st.subheader("🌧️ PAGASA Advisory (Tagoloan River Basin)")
+    # Refresh advisory button
+    if st.button("🔄 Refresh Live Advisory"):
+        advisory = fetch_pagasa_advisory()
+        if advisory:
+            st.session_state.pagasa_severity = advisory["severity"]
+            st.session_state.pagasa_timestamp = advisory["timestamp"]
+            st.session_state.pagasa_label = advisory["label"]
+            st.session_state.pagasa_color = advisory["color"]
+            st.session_state.pagasa_raw = advisory["raw_text"]
+        else:
+            st.session_state.pagasa_severity = None
+            st.session_state.pagasa_timestamp = "Advisory unavailable"
+            st.session_state.pagasa_label = "No data"
+            st.session_state.pagasa_color = "grey"
+            st.session_state.pagasa_raw = ""
+
+    # If we haven't fetched yet, do it on first load
+    if "pagasa_severity" not in st.session_state:
+        advisory = fetch_pagasa_advisory()
+        if advisory:
+            st.session_state.pagasa_severity = advisory["severity"]
+            st.session_state.pagasa_timestamp = advisory["timestamp"]
+            st.session_state.pagasa_label = advisory["label"]
+            st.session_state.pagasa_color = advisory["color"]
+            st.session_state.pagasa_raw = advisory["raw_text"]
+        else:
+            st.session_state.pagasa_severity = None
+            st.session_state.pagasa_timestamp = "Advisory unavailable"
+            st.session_state.pagasa_label = "No data"
+            st.session_state.pagasa_color = "grey"
+            st.session_state.pagasa_raw = ""
+
+    # Display live gauge
+    severity = st.session_state.get("pagasa_severity")
+    ts = st.session_state.get("pagasa_timestamp", "Not available")
+    label = st.session_state.get("pagasa_label", "Unknown")
+    color = st.session_state.get("pagasa_color", "grey")
+
+    # Determine flashing class based on severity
+    flash_class = ""
+    if severity is not None and not st.session_state.disable_flashing:
+        if severity >= 0.60:
+            flash_class = "fast-flash"
+        else:
+            flash_class = "slow-flash"
+
+    # Warning icon for high severity
+    warning_icon = "⚠️" if severity and severity >= 0.60 else ""
+
+    gauge_html = f"""
+    <div class="live-gauge {flash_class}" style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:bold; color: {color};">{warning_icon} {label}</span>
+            <span style="font-size:0.8rem; color: #888;">Last updated: {ts}</span>
+        </div>
+        <div style="width:100%; height:25px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-top:5px; border: 1px solid #555;">
+            <div style="position:absolute; left:{severity*100 if severity else 0}%; top:-4px; width:4px; height:33px; background:black; border-radius:2px;"></div>
+        </div>
+        <p style="margin-top:5px; font-size:11px; color: #aaa;">Based on PAGASA advisory (updated daily). Simulation slider below.</p>
+    </div>
+    <style>
+        @keyframes slowPulse {{
+            0% {{ opacity: 1; }}
+            50% {{ opacity: 0.7; }}
+            100% {{ opacity: 1; }}
+        }}
+        @keyframes fastPulse {{
+            0% {{ opacity: 1; }}
+            50% {{ opacity: 0.4; }}
+            100% {{ opacity: 1; }}
+        }}
+        .slow-flash {{
+            animation: slowPulse 2s infinite;
+        }}
+        .fast-flash {{
+            animation: fastPulse 0.8s infinite;
+        }}
+    </style>
+    """
+    st.markdown(gauge_html, unsafe_allow_html=True)
+
+    # Disable flashing checkbox
+    st.session_state.disable_flashing = st.checkbox("Disable flashing", value=st.session_state.disable_flashing, key="disable_flash_check")
+
+    st.markdown("---")
+    st.subheader("🧪 Simulated Flood Severity")
     st.markdown("**Flood Severity (Rainfall Intensity)**")
     flood_sev = st.slider("Severity (0–1)", 0.0, 1.0, st.session_state.twin.flood_severity, 0.01, key="flood_sev_slider",
                           help="0 = light rain, 1 = extreme rainfall.")
     if flood_sev <= 0.25:
         rainfall_mm = flood_sev * 40
         label = "Light rain"
+        color_code = "green"
     elif flood_sev <= 0.50:
         rainfall_mm = 10 + (flood_sev - 0.25) * 80
         label = "Moderate rain (Yellow)"
+        color_code = "#FFC107"
     elif flood_sev <= 0.75:
         rainfall_mm = 30 + (flood_sev - 0.50) * 120
         label = "Heavy rain (Orange)"
+        color_code = "orange"
     else:
         rainfall_mm = 60 + (flood_sev - 0.75) * 160
         label = "Torrential rain (Red)"
+        color_code = "red"
     st.markdown(f"🌧️ **{rainfall_mm:.0f} mm** – {label}")
     gauge_html = f"""
     <div style="width:100%; height:30px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-bottom:10px;">
@@ -1099,5 +1269,3 @@ if len(twin.history) > 1:
         st.caption(f"⚠️ **{barangay_title}:** Resistance is growing; potential trigger events (like demolition threats) may be escalating tensions.")
 else:
     st.info("Run at least two steps to see the timeline.")
-
-st.markdown("---")
