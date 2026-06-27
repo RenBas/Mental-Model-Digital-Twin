@@ -7,8 +7,6 @@ import networkx as nx
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score
-import requests
-import time
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -463,49 +461,7 @@ def get_mock_clusters():
     }
 
 # ==============================================================================
-# 7. MAP HELPER – CORRECTED 10 BARANGAYS OF TAGOLOAN
-# ==============================================================================
-TAGOLOAN_COORDS = {
-    "Baluarte": (8.5486, 124.7275),
-    "Casinglot": (8.5595, 124.7180),
-    "Gracia": (8.5560, 124.7270),
-    "Mohon": (8.5530, 124.7380),
-    "Natumolan": (8.5480, 124.7190),
-    "Poblacion": (8.5390, 124.7540),
-    "Rosario": (8.5620, 124.7220),
-    "Santa Ana": (8.5315, 124.7520),
-    "Santa Cruz": (8.5570, 124.7420),
-    "Sugbongcogon": (8.5610, 124.7160)
-}
-
-def geocode_barangays(barangay_names):
-    """Try OSM Nominatim, fall back to TAGOLOAN_COORDS if API fails or missing."""
-    coords = {}
-    for name in barangay_names:
-        if name in TAGOLOAN_COORDS:
-            coords[name] = TAGOLOAN_COORDS[name]
-            continue
-        try:
-            url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                "q": f"{name}, Tagoloan, Misamis Oriental, Philippines",
-                "format": "json",
-                "limit": 1
-            }
-            headers = {"User-Agent": "TagoloanDigitalTwin/1.0"}
-            r = requests.get(url, params=params, headers=headers, timeout=5)
-            data = r.json()
-            if data:
-                coords[name] = (float(data[0]["lat"]), float(data[0]["lon"]))
-            else:
-                coords[name] = (8.5390, 124.7540)  # fallback to municipal center
-            time.sleep(1)
-        except Exception:
-            coords[name] = (8.5390, 124.7540)
-    return coords
-
-# ==============================================================================
-# 8. STREAMLIT APP
+# 7. STREAMLIT APP
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
@@ -564,7 +520,6 @@ if 'twin' not in st.session_state:
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
     st.session_state.raw_data = None
-    st.session_state.barangay_coords = None
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -780,54 +735,12 @@ resist_pct = metrics['Resisting LGU (%)']
 
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
 
-# ===================== INTERACTIVE MAP =====================
-if st.session_state.raw_data is not None:
-    all_barangays = sorted(st.session_state.raw_data['Barangay_Name'].unique().tolist())
-else:
-    all_barangays = list(TAGOLOAN_COORDS.keys())
-
-if st.session_state.barangay_coords is None or set(all_barangays) != set(st.session_state.barangay_coords.keys()):
-    with st.spinner("Loading map coordinates..."):
-        coords = geocode_barangays(all_barangays)
-        st.session_state.barangay_coords = coords
-
-map_data = []
-for brgy, (lat, lon) in st.session_state.barangay_coords.items():
-    is_selected = (brgy == st.session_state.current_barangay)
-    map_data.append({
-        "Barangay": brgy,
-        "Lat": lat,
-        "Lon": lon,
-        "Selected": is_selected,
-        "Size": 18 if is_selected else 10,
-        "Color": "#FF5722" if is_selected else "#2196F3"
-    })
-df_map = pd.DataFrame(map_data)
-
-fig_map = go.Figure(go.Scattermapbox(
-    lat=df_map["Lat"],
-    lon=df_map["Lon"],
-    mode="markers+text",
-    marker=go.scattermapbox.Marker(size=df_map["Size"], color=df_map["Color"], opacity=0.9),
-    text=df_map["Barangay"],
-    textposition="top center",
-    hovertext=df_map["Barangay"] + "<br>Population data shown below",
-    hoverinfo="text"
-))
-
-fig_map.update_layout(
-    mapbox=dict(style="carto-positron", center=dict(lat=8.5390, lon=124.7540), zoom=12.5),
-    margin=dict(l=0, r=0, t=30, b=0),
-    height=450,
-    title="Barangay Map (selected in orange)"
+# ---- Static Map (restored) ----
+st.image(
+    "https://i.imgur.com/tCR5F7n.jpg",
+    caption="Tagoloan Municipality – barangay boundaries",
+    width=700
 )
-
-if st.session_state.current_barangay != "All Barangays" and st.session_state.current_barangay in st.session_state.barangay_coords:
-    sel_lat, sel_lon = st.session_state.barangay_coords[st.session_state.current_barangay]
-    fig_map.update_layout(mapbox_center=dict(lat=sel_lat, lon=sel_lon), mapbox_zoom=15)
-
-st.plotly_chart(fig_map, use_container_width=True)
-st.caption("📍 The selected barangay is highlighted in orange. Use the sidebar dropdown to switch focus.")
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
