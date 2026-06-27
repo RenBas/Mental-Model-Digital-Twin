@@ -820,39 +820,41 @@ if pop > 0:
 st.markdown("---")
 
 st.subheader("Socio-Psychological Network Graph")
-G = nx.DiGraph()
-for name, node in twin.nodes.items():
-    G.add_node(name, score=node.current_score)
-for edge in twin.edges:
-    G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
+if pop == 0:
+    st.info("Upload and calibrate data to display the psychological network graph.")
+else:
+    G = nx.DiGraph()
+    for name, node in twin.nodes.items():
+        G.add_node(name, score=node.current_score)
+    for edge in twin.edges:
+        G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
 
-pos = nx.spring_layout(G, k=0.35, seed=42)
-edge_x, edge_y = [], []
-for e in G.edges():
-    x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
-    edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
-                        hoverinfo='none', mode='lines')
-node_x, node_y, node_text, node_color = [], [], [], []
-for n, d in G.nodes(data=True):
-    x, y = pos[n]
-    node_x.append(x); node_y.append(y)
-    node_text.append(f"{n}<br>Score: {d['score']:.1f}")
-    node_color.append(d['score'])
-node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
-                        text=list(G.nodes()), textposition="bottom center",
-                        hovertext=node_text, hoverinfo='text',
-                        marker=dict(showscale=True, colorscale='Viridis', reversescale=True,
-                                    color=node_color, size=25,
-                                    colorbar=dict(thickness=10, title='Score')))
-fig_net = go.Figure(data=[edge_trace, node_trace],
-                    layout=go.Layout(title='12 Nodes & 18 Causal Pathways', showlegend=False,
-                                     margin=dict(b=20,l=5,r=5,t=40),
-                                     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-st.plotly_chart(fig_net, use_container_width=True)
+    pos = nx.spring_layout(G, k=0.35, seed=42)
+    edge_x, edge_y = [], []
+    for e in G.edges():
+        x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
+        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
+                            hoverinfo='none', mode='lines')
+    node_x, node_y, node_text, node_color = [], [], [], []
+    for n, d in G.nodes(data=True):
+        x, y = pos[n]
+        node_x.append(x); node_y.append(y)
+        node_text.append(f"{n}<br>Score: {d['score']:.1f}")
+        node_color.append(d['score'])
+    node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                            text=list(G.nodes()), textposition="bottom center",
+                            hovertext=node_text, hoverinfo='text',
+                            marker=dict(showscale=True, colorscale='Viridis', reversescale=True,
+                                        color=node_color, size=25,
+                                        colorbar=dict(thickness=10, title='Score')))
+    fig_net = go.Figure(data=[edge_trace, node_trace],
+                        layout=go.Layout(title='12 Nodes & 18 Causal Pathways', showlegend=False,
+                                         margin=dict(b=20,l=5,r=5,t=40),
+                                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+    st.plotly_chart(fig_net, use_container_width=True)
 
-if pop > 0:
     high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
     low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
     if high_nodes:
