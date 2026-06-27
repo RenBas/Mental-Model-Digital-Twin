@@ -6,3 +6,5 @@ networkx
 scikit-learn
 Pillow
 geopandas
+beautifulsoup4
+requests
