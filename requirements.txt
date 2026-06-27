@@ -8,3 +8,5 @@ Pillow
 geopandas
 beautifulsoup4
 requests
+folium
+streamlit-folium
