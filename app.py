@@ -532,6 +532,10 @@ with st.sidebar:
         for cac in cac_vars:
             csv_columns.append(f"{clean_name}_{cac}")
 
+    st.markdown("---")
+    st.header("🗺️ Map Settings")
+    flood_opacity = st.slider("Flood Hazard Overlay Opacity", 0.0, 1.0, 0.5, 0.05)
+    
     template_df = pd.DataFrame({col: ['Sample Name', 'Sample Barangay'] if col in ['Respondent_Name', 'Barangay_Name'] else [50, 60] for col in csv_columns})
     st.download_button("📥 Download CAC CSV Template", template_df.to_csv(index=False).encode('utf-8'),
                        'twin_cac_template.csv', 'text/csv')
@@ -735,12 +739,27 @@ resist_pct = metrics['Resisting LGU (%)']
 
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
 
-# ---- Static Map (restored) ----
-st.image(
-    "https://i.imgur.com/tCR5F7n.jpg",
-    caption="Tagoloan Municipality – barangay boundaries",
-    width=700
-)
+# ---- Overlay Map ----
+barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
+flood_map_url = "https://i.imgur.com/y0wy3hf.jpg"
+
+map_html = f"""
+<div style="position: relative; width: 700px; margin: auto;">
+    <img src="{barangay_map_url}" style="width: 100%; display: block;" alt="Barangay boundaries">
+    <img src="{flood_map_url}" style="
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        opacity: {flood_opacity};
+        mix-blend-mode: multiply;
+    " alt="Flood hazard overlay">
+</div>
+<p style="text-align: center; font-size: 0.9rem;">
+    Tagoloan Municipality – barangay boundaries with flood hazard overlay (opacity {flood_opacity:.0%})
+</p>
+"""
+st.markdown(map_html, unsafe_allow_html=True)
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
