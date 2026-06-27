@@ -4,12 +4,13 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
-from PIL import Image, ImageEnhance
-import requests
-from io import BytesIO
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score
+import requests
+import time
+from PIL import Image
+from io import BytesIO
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -464,7 +465,56 @@ def get_mock_clusters():
     }
 
 # ==============================================================================
-# 7. STREAMLIT APP
+# 7. MAP HELPER – CORRECTED 10 BARANGAYS OF TAGOLOAN (kept for reference)
+# ==============================================================================
+TAGOLOAN_COORDS = {
+    "Baluarte": (8.5486, 124.7275),
+    "Casinglot": (8.5595, 124.7180),
+    "Gracia": (8.5560, 124.7270),
+    "Mohon": (8.5530, 124.7380),
+    "Natumolan": (8.5480, 124.7190),
+    "Poblacion": (8.5390, 124.7540),
+    "Rosario": (8.5620, 124.7220),
+    "Santa Ana": (8.5315, 124.7520),
+    "Santa Cruz": (8.5570, 124.7420),
+    "Sugbongcogon": (8.5610, 124.7160)
+}
+
+# ==============================================================================
+# 8. COMBINED MAP FUNCTION
+# ==============================================================================
+def create_overlay_image(base_url, overlay_url, opacity=0.5):
+    """Download two images, resize overlay to match base, blend, return combined PIL image."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+    
+    # Download base image
+    resp_base = requests.get(base_url, headers=headers)
+    if resp_base.status_code != 200 or "image" not in resp_base.headers.get("Content-Type", ""):
+        st.error(f"Failed to load base image. Status: {resp_base.status_code}, Content-Type: {resp_base.headers.get('Content-Type')}")
+        st.stop()
+    base_img = Image.open(BytesIO(resp_base.content)).convert("RGBA")
+
+    # Download overlay
+    resp_overlay = requests.get(overlay_url, headers=headers)
+    if resp_overlay.status_code != 200 or "image" not in resp_overlay.headers.get("Content-Type", ""):
+        st.error(f"Failed to load flood hazard image. Status: {resp_overlay.status_code}, Content-Type: {resp_overlay.headers.get('Content-Type')}")
+        st.stop()
+    overlay_img = Image.open(BytesIO(resp_overlay.content)).convert("RGBA")
+
+    # Resize overlay to match base dimensions exactly
+    overlay_img = overlay_img.resize(base_img.size, Image.LANCZOS)
+
+    # Adjust overlay opacity via its alpha channel
+    r, g, b, a = overlay_img.split()
+    a = a.point(lambda p: p * opacity)
+    overlay_img = Image.merge("RGBA", (r, g, b, a))
+
+    # Composite overlay onto base
+    combined = Image.alpha_composite(base_img, overlay_img)
+    return combined.convert("RGB")
+
+# ==============================================================================
+# 9. STREAMLIT APP
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
@@ -535,10 +585,6 @@ with st.sidebar:
         for cac in cac_vars:
             csv_columns.append(f"{clean_name}_{cac}")
 
-    st.markdown("---")
-    st.header("🗺️ Map Settings")
-    flood_opacity = st.slider("Flood Hazard Overlay Opacity", 0.0, 1.0, 0.5, 0.05)
-    
     template_df = pd.DataFrame({col: ['Sample Name', 'Sample Barangay'] if col in ['Respondent_Name', 'Barangay_Name'] else [50, 60] for col in csv_columns})
     st.download_button("📥 Download CAC CSV Template", template_df.to_csv(index=False).encode('utf-8'),
                        'twin_cac_template.csv', 'text/csv')
@@ -706,6 +752,10 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
+    st.header("🗺️ Map Settings")
+    flood_opacity = st.slider("Flood Hazard Overlay Opacity", 0.0, 1.0, 0.5, 0.05)
+
+    st.markdown("---")
     st.header("🎚️ LGU Intervention Sliders")
     st.caption("Adjust the three CAC components directly. Changing them updates the psychological baseline. "
                "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes.")
@@ -727,31 +777,6 @@ with st.sidebar:
         st.session_state.twin.reset()
         st.rerun()
 
-def create_overlay_image(base_url, overlay_url, opacity=0.5):
-    """Download two images, resize the overlay to match the base, blend, return combined image."""
-    # Download base image
-    resp_base = requests.get(base_url)
-    base_img = Image.open(BytesIO(resp_base.content)).convert("RGBA")
-
-    # Download overlay
-    resp_overlay = requests.get(overlay_url)
-    overlay_img = Image.open(BytesIO(resp_overlay.content)).convert("RGBA")
-
-    # Resize overlay to match base dimensions
-    overlay_img = overlay_img.resize(base_img.size, Image.LANCZOS)
-
-    # Adjust overlay opacity
-    # Split channels and set alpha channel
-    r, g, b, a = overlay_img.split()
-    a = a.point(lambda p: p * opacity)   # scale existing alpha by opacity
-    overlay_img = Image.merge("RGBA", (r, g, b, a))
-
-    # Composite: overlay on top of base
-    combined = Image.alpha_composite(base_img, overlay_img)
-
-    # Convert back to RGB for JPEG/PNG display (no alpha issues)
-    return combined.convert("RGB")
-
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
 st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
@@ -767,20 +792,21 @@ resist_pct = metrics['Resisting LGU (%)']
 
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
 
-# ---- Overlay Map ----
-barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
-flood_map_url = "https://i.imgur.com/y0wy3hf.jpg"
-
-# ---- Overlay Map ----
-barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
-flood_map_url = "https://i.imgur.com/y0wy3hf.jpeg"   # correct direct link
-
 # ---- Combined Map ----
-barangay_map_url = "https://i.imgur.com/tCR5F7n.jpg"
+barangay_map_url = "https://i.imgur.com/tCR5F7n.jpeg"
 flood_map_url = "https://i.imgur.com/y0wy3hf.jpeg"
 
 combined_image = create_overlay_image(barangay_map_url, flood_map_url, flood_opacity)
 st.image(combined_image, caption=f"Tagoloan Municipality – barangay boundaries with flood hazard overlay (opacity {flood_opacity:.0%})", use_container_width=True)
+
+# ---- Basic Behavioral Outcomes ----
+st.subheader("Community Behavioral Outcomes")
+st.caption("Realistic baselines from survey CAC data. Use 'Run' to see dynamic changes.")
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total Population", f"{pop:,}")
+col2.metric("Projected to Relocate", f"{reloc_pct:.1f}%")
+col3.metric("Evacuating", f"{evac_pct:.1f}%")
+col4.metric("Resisting LGU", f"{resist_pct:.1f}%")
 
 snapshot_parts = []
 if reloc_pct > 30:
