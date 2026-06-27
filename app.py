@@ -7,6 +7,8 @@ import networkx as nx
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score
+import requests
+import time
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -96,7 +98,7 @@ class ClusterArchetype:
         self.resistance_threshold = resistance_threshold
 
 # ==============================================================================
-# 2. K-MEANS NOMENCLATURE ENGINE
+# 2. K‑MEANS NOMENCLATURE ENGINE
 # ==============================================================================
 PERSONA_MAP = {
     "Prevention and flooding": "Proactive Risk Mitigators",
@@ -461,11 +463,52 @@ def get_mock_clusters():
     }
 
 # ==============================================================================
-# 7. STREAMLIT APP
+# 7. MAP HELPER – CORRECTED 10 BARANGAYS OF TAGOLOAN
+# ==============================================================================
+TAGOLOAN_COORDS = {
+    "Baluarte": (8.5486, 124.7275),
+    "Casinglot": (8.5595, 124.7180),
+    "Gracia": (8.5560, 124.7270),
+    "Mohon": (8.5530, 124.7380),
+    "Natumolan": (8.5480, 124.7190),
+    "Poblacion": (8.5390, 124.7540),
+    "Rosario": (8.5620, 124.7220),
+    "Santa Ana": (8.5315, 124.7520),
+    "Santa Cruz": (8.5570, 124.7420),
+    "Sugbongcogon": (8.5610, 124.7160)
+}
+
+def geocode_barangays(barangay_names):
+    """Try OSM Nominatim, fall back to TAGOLOAN_COORDS if API fails or missing."""
+    coords = {}
+    for name in barangay_names:
+        if name in TAGOLOAN_COORDS:
+            coords[name] = TAGOLOAN_COORDS[name]
+            continue
+        try:
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": f"{name}, Tagoloan, Misamis Oriental, Philippines",
+                "format": "json",
+                "limit": 1
+            }
+            headers = {"User-Agent": "TagoloanDigitalTwin/1.0"}
+            r = requests.get(url, params=params, headers=headers, timeout=5)
+            data = r.json()
+            if data:
+                coords[name] = (float(data[0]["lat"]), float(data[0]["lon"]))
+            else:
+                coords[name] = (8.5390, 124.7540)  # fallback to municipal center
+            time.sleep(1)
+        except Exception:
+            coords[name] = (8.5390, 124.7540)
+    return coords
+
+# ==============================================================================
+# 8. STREAMLIT APP
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
-# ---------- Dark Mode Toggle ----------
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -473,12 +516,10 @@ def apply_dark_mode():
     if st.session_state.dark_mode:
         dark_css = """
         <style>
-            /* Main background and text */
             .stApp, .main, .stSidebar, .st-expander, .stMetric, .stDataFrame {
                 background-color: #1E1E1E;
                 color: #E0E0E0;
             }
-            /* Metric cards */
             div[data-testid="metric-container"] {
                 background-color: #2C2C2C;
                 border: 1px solid #444;
@@ -487,37 +528,29 @@ def apply_dark_mode():
             div[data-testid="metric-container"] > label {
                 color: #E0E0E0 !important;
             }
-            /* Sidebar */
             .stSidebar {
                 background-color: #252525;
             }
-            /* Expanders */
             .streamlit-expanderHeader {
                 color: #E0E0E0;
             }
-            /* Buttons */
             .stButton>button {
                 background-color: #3A3A3A;
                 color: #E0E0E0;
                 border: 1px solid #555;
             }
-            /* Sliders */
             .stSlider>div>div>div>div {
                 color: #E0E0E0;
             }
-            /* Captions and small text */
             .caption, .stCaption {
                 color: #B0B0B0;
             }
-            /* Keep the original PAGASA gauge colors untouched – they are inline, no CSS override needed */
         </style>
         """
         st.markdown(dark_css, unsafe_allow_html=True)
 
-# Apply the dark mode CSS if toggled
 apply_dark_mode()
 
-# ---------- Session State ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
@@ -531,14 +564,13 @@ if 'twin' not in st.session_state:
     st.session_state.respondent_clusters = None
     st.session_state.current_barangay = "All Barangays"
     st.session_state.raw_data = None
+    st.session_state.barangay_coords = None
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    # Dark mode toggle at the very top
-    st.toggle("🌙 Dark Mode", key="dark_mode", on_change=st.rerun)  # triggers a rerun on toggle
+    st.toggle("🌙 Dark Mode", key="dark_mode", on_change=st.rerun)
 
     st.header("📊 Data Upload & Calibration")
-
     cac_vars = ['Challenge', 'Acceptance', 'Commitment']
     csv_columns = ['Respondent_Name', 'Barangay_Name']
     for node, clean_name in col_map.items():
@@ -663,75 +695,48 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🎛️ Simulation Controls")
-
     steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
-
     if st.button("▶️ Run", use_container_width=True, type="primary"):
         for _ in range(steps_to_run):
             st.session_state.twin.step()
         st.rerun()
-
     if st.button("🔄 Reset Simulation", use_container_width=True):
         st.session_state.twin.reset()
         st.rerun()
 
     st.markdown("---")
     st.header("⚙️ Settings")
-
-    new_pop = st.slider(
-        "Total Residents to Simulate",
-        10, 5000,
-        st.session_state.twin.total_population,
-        key="pop_slider",
-        help="Changing this value immediately regenerates the population using the current cluster proportions."
-    )
+    new_pop = st.slider("Total Residents to Simulate", 10, 5000, st.session_state.twin.total_population, key="pop_slider",
+                        help="Changing this value immediately regenerates the population.")
     if new_pop != st.session_state.twin.total_population:
         st.session_state.twin.update_population_size(new_pop)
         st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
         st.rerun()
 
-    # ---- Flood severity slider with rainfall mapping and gauge ----
     st.markdown("**Flood Severity (Rainfall Intensity)**")
-    flood_sev = st.slider(
-        "Severity (0–1)",
-        0.0, 1.0,
-        st.session_state.twin.flood_severity,
-        0.01,
-        key="flood_sev_slider",
-        help="0 = light rain, 1 = extreme rainfall. Higher values increase evacuation likelihood."
-    )
-
+    flood_sev = st.slider("Severity (0–1)", 0.0, 1.0, st.session_state.twin.flood_severity, 0.01, key="flood_sev_slider",
+                          help="0 = light rain, 1 = extreme rainfall.")
     if flood_sev <= 0.25:
         rainfall_mm = flood_sev * 40
-        color_code = "green"
         label = "Light rain"
     elif flood_sev <= 0.50:
         rainfall_mm = 10 + (flood_sev - 0.25) * 80
-        color_code = "#FFC107"
         label = "Moderate rain (Yellow)"
     elif flood_sev <= 0.75:
         rainfall_mm = 30 + (flood_sev - 0.50) * 120
-        color_code = "orange"
         label = "Heavy rain (Orange)"
     else:
         rainfall_mm = 60 + (flood_sev - 0.75) * 160
-        color_code = "red"
         label = "Torrential rain (Red)"
-
     st.markdown(f"🌧️ **{rainfall_mm:.0f} mm** – {label}")
-
     gauge_html = f"""
     <div style="width:100%; height:30px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-bottom:10px;">
         <div style="position:absolute; left:{flood_sev*100}%; top:-5px; width:4px; height:40px; background:black; border-radius:2px;"></div>
     </div>
-    <p style="margin-top:5px; font-size:12px;">
-        🟢 0-10 mm &nbsp; 🟡 10-30 mm &nbsp; 🟠 30-60 mm &nbsp; 🔴 >60 mm
-    </p>
+    <p style="margin-top:5px; font-size:12px;">🟢 0-10 mm &nbsp; 🟡 10-30 mm &nbsp; 🟠 30-60 mm &nbsp; 🔴 >60 mm</p>
     """
     st.markdown(gauge_html, unsafe_allow_html=True)
-
     st.session_state.twin.flood_severity = flood_sev
-
     lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
     if flood_sev != st.session_state.twin.flood_severity or lgu_threat != st.session_state.twin.lgu_threat:
         if st.button("Apply Environmental Triggers"):
@@ -740,29 +745,22 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🎚️ LGU Intervention Sliders")
-    st.caption(
-        "Adjust the three CAC components directly. Changing them updates the psychological baseline. "
-        "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes. "
-        "You can also use **'▶️ Run'** to watch the transition unfold step by step."
-    )
+    st.caption("Adjust the three CAC components directly. Changing them updates the psychological baseline. "
+               "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes.")
     with st.expander("Expand to modify constructs", expanded=False):
         for node_name, node in st.session_state.twin.nodes.items():
             st.markdown(f"**{node_name}**")
             col1, col2, col3 = st.columns(3)
             with col1:
-                new_ch = st.slider(f"Challenge", 0.0, 100.0, float(node.baseline_cac['Challenge']),
-                                   key=f"{node_name}_ch")
+                new_ch = st.slider(f"Challenge", 0.0, 100.0, float(node.baseline_cac['Challenge']), key=f"{node_name}_ch")
             with col2:
-                new_ac = st.slider(f"Acceptance", 0.0, 100.0, float(node.baseline_cac['Acceptance']),
-                                   key=f"{node_name}_ac")
+                new_ac = st.slider(f"Acceptance", 0.0, 100.0, float(node.baseline_cac['Acceptance']), key=f"{node_name}_ac")
             with col3:
-                new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']),
-                                   key=f"{node_name}_co")
+                new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']), key=f"{node_name}_co")
             node.baseline_cac['Challenge'] = new_ch
             node.baseline_cac['Acceptance'] = new_ac
             node.baseline_cac['Commitment'] = new_co
             node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
-
     if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True):
         st.session_state.twin.reset()
         st.rerun()
@@ -781,11 +779,55 @@ evac_pct = metrics['Evacuating (%)']
 resist_pct = metrics['Resisting LGU (%)']
 
 st.caption(f"Current data scope: **{st.session_state.current_barangay}** — Population: **{pop}** residents.")
-st.image(
-    "https://i.imgur.com/tCR5F7n.jpg",
-    caption="Tagoloan Municipality – barangay boundaries",
-    width=700
+
+# ===================== INTERACTIVE MAP =====================
+if st.session_state.raw_data is not None:
+    all_barangays = sorted(st.session_state.raw_data['Barangay_Name'].unique().tolist())
+else:
+    all_barangays = list(TAGOLOAN_COORDS.keys())
+
+if st.session_state.barangay_coords is None or set(all_barangays) != set(st.session_state.barangay_coords.keys()):
+    with st.spinner("Loading map coordinates..."):
+        coords = geocode_barangays(all_barangays)
+        st.session_state.barangay_coords = coords
+
+map_data = []
+for brgy, (lat, lon) in st.session_state.barangay_coords.items():
+    is_selected = (brgy == st.session_state.current_barangay)
+    map_data.append({
+        "Barangay": brgy,
+        "Lat": lat,
+        "Lon": lon,
+        "Selected": is_selected,
+        "Size": 18 if is_selected else 10,
+        "Color": "#FF5722" if is_selected else "#2196F3"
+    })
+df_map = pd.DataFrame(map_data)
+
+fig_map = go.Figure(go.Scattermapbox(
+    lat=df_map["Lat"],
+    lon=df_map["Lon"],
+    mode="markers+text",
+    marker=go.scattermapbox.Marker(size=df_map["Size"], color=df_map["Color"], opacity=0.9),
+    text=df_map["Barangay"],
+    textposition="top center",
+    hovertext=df_map["Barangay"] + "<br>Population data shown below",
+    hoverinfo="text"
+))
+
+fig_map.update_layout(
+    mapbox=dict(style="carto-positron", center=dict(lat=8.5390, lon=124.7540), zoom=12.5),
+    margin=dict(l=0, r=0, t=30, b=0),
+    height=450,
+    title="Barangay Map (selected in orange)"
 )
+
+if st.session_state.current_barangay != "All Barangays" and st.session_state.current_barangay in st.session_state.barangay_coords:
+    sel_lat, sel_lon = st.session_state.barangay_coords[st.session_state.current_barangay]
+    fig_map.update_layout(mapbox_center=dict(lat=sel_lat, lon=sel_lon), mapbox_zoom=15)
+
+st.plotly_chart(fig_map, use_container_width=True)
+st.caption("📍 The selected barangay is highlighted in orange. Use the sidebar dropdown to switch focus.")
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
