@@ -596,7 +596,8 @@ defaults = {
     'log_entries': [],
     'auto_log': True,
     'prev_k_mode': "Auto (silhouette)",
-    'dark_mode': False
+    'dark_mode': False,
+    'last_processed_hash': None   # to prevent re-calibration loops
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -628,8 +629,12 @@ with st.sidebar:
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                st.session_state.raw_data = df_raw
-                st.session_state.needs_calibration = True
+                # Only trigger calibration if data has changed (compare hashes)
+                current_hash = hashlib.md5(df_raw.to_csv(index=False).encode()).hexdigest()
+                if st.session_state.last_processed_hash != current_hash:
+                    st.session_state.raw_data = df_raw
+                    st.session_state.needs_calibration = True
+                    st.session_state.last_processed_hash = current_hash
         except Exception as e:
             st.error(f"Error reading file: {e}")
     if uploaded_file is None and st.session_state.raw_data is not None:
