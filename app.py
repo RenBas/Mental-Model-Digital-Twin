@@ -10,9 +10,8 @@ from sklearn.metrics import silhouette_score
 import requests
 from bs4 import BeautifulSoup
 import re
-import json
-import geopandas as gpd
-from shapely.geometry import shape
+from PIL import Image
+from io import BytesIO
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -523,439 +522,7 @@ def fetch_pagasa_advisory():
         return None
 
 # ==============================================================================
-# 8. TAGOLOAN RIVER BASIN GEOJSON (hard‑coded from your provided data)
-# ==============================================================================
-TAGOLOAN_GEOJSON_STR = r'''{
-  "type": "FeatureCollection",
-  "name": "Tagoloan River Basin — PAGASA Hazard Map",
-  "description": "Traced from DOST-PAGASA / DENR-MGB Tagoloan River Basin location map. Includes basin boundary, flood-prone areas, landslide-prone areas, river network, and monitoring stations.",
-  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
-  "features": [
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Tagoloan River Basin",
-        "type": "basin_boundary",
-        "source": "DOST-PAGASA",
-        "area_km2": 1704,
-        "province": "Misamis Oriental / Bukidnon / Agusan del Sur",
-        "region": "Northern Mindanao (Region X) and CARAGA",
-        "outlet": "Macajalar Bay"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.690,8.622],[124.710,8.618],[124.730,8.615],[124.755,8.610],
-          [124.775,8.605],[124.790,8.598],[124.800,8.585],[124.810,8.570],
-          [124.815,8.552],[124.820,8.535],[124.825,8.515],[124.830,8.495],
-          [124.835,8.475],[124.840,8.455],[124.845,8.435],[124.848,8.415],
-          [124.850,8.395],[124.852,8.375],[124.855,8.355],[124.857,8.335],
-          [124.858,8.315],[124.855,8.295],[124.850,8.278],[124.843,8.262],
-          [124.835,8.248],[124.825,8.235],[124.815,8.225],[124.805,8.215],
-          [124.793,8.207],[124.780,8.200],[124.765,8.195],[124.750,8.192],
-          [124.735,8.190],[124.718,8.190],[124.700,8.193],[124.685,8.198],
-          [124.670,8.205],[124.658,8.215],[124.648,8.228],[124.640,8.242],
-          [124.635,8.258],[124.630,8.275],[124.627,8.295],[124.625,8.315],
-          [124.623,8.335],[124.622,8.355],[124.622,8.375],[124.623,8.395],
-          [124.625,8.415],[124.628,8.435],[124.632,8.455],[124.638,8.473],
-          [124.645,8.490],[124.650,8.505],[124.652,8.520],[124.650,8.535],
-          [124.645,8.548],[124.638,8.560],[124.630,8.570],[124.622,8.580],
-          [124.618,8.590],[124.620,8.600],[124.628,8.610],[124.640,8.617],
-          [124.655,8.621],[124.672,8.623],[124.690,8.622]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Flood-prone area — main river corridor",
-        "type": "flood_prone",
-        "hazard_level": "high",
-        "source": "DENR-MGB flood susceptibility map",
-        "description": "High flood susceptibility along the primary Tagoloan River channel. Risk highest in lower reaches near Tagoloan municipality and Macajalar Bay coastal zone.",
-        "affected_barangays": ["Brgy. San Roque", "Alag", "Brgy. San Vicente", "Tagoloan riverside barangays"]
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.710,8.615],[124.718,8.608],[124.715,8.585],[124.712,8.558],
-          [124.708,8.532],[124.706,8.505],[124.702,8.478],[124.700,8.450],
-          [124.698,8.422],[124.696,8.395],[124.694,8.368],[124.692,8.340],
-          [124.690,8.312],[124.688,8.285],[124.686,8.258],[124.684,8.232],
-          [124.682,8.210],[124.676,8.205],[124.672,8.215],[124.674,8.240],
-          [124.676,8.265],[124.678,8.292],[124.680,8.318],[124.682,8.345],
-          [124.684,8.372],[124.686,8.400],[124.688,8.428],[124.690,8.455],
-          [124.692,8.482],[124.696,8.508],[124.700,8.535],[124.704,8.560],
-          [124.708,8.585],[124.710,8.615]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Flood-prone area — east tributary confluence",
-        "type": "flood_prone",
-        "hazard_level": "high",
-        "source": "DENR-MGB flood susceptibility map",
-        "description": "Localised flood zone along east tributary near Impasug-Ong. Periodic overbank flooding during typhoon season.",
-        "affected_area": "Impasug-Ong / San Luis Malit-bog lowlands"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.820,8.508],[124.832,8.500],[124.840,8.488],[124.835,8.472],
-          [124.822,8.465],[124.808,8.470],[124.802,8.482],[124.808,8.498],
-          [124.820,8.508]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Flood-prone area — lower east sub-basin",
-        "type": "flood_prone",
-        "hazard_level": "high",
-        "source": "DENR-MGB flood susceptibility map",
-        "description": "Flood-prone lowland confluence zone near Malaybalay approach. Susceptible during prolonged monsoon rainfall events.",
-        "affected_area": "Lower east sub-basin floodplain"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.828,8.298],[124.842,8.288],[124.850,8.275],[124.845,8.260],
-          [124.832,8.252],[124.818,8.255],[124.810,8.265],[124.815,8.280],
-          [124.828,8.298]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Flood-prone area — coastal delta and estuary",
-        "type": "flood_prone",
-        "hazard_level": "very_high",
-        "source": "DENR-MGB flood susceptibility map",
-        "description": "Estuarine and coastal floodplain. Highest risk zone — storm surge combined with river flooding during typhoons. Mangrove buffer present but limited.",
-        "affected_area": "Tagoloan municipality coastal zone, Macajalar Bay fringe"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.670,8.215],[124.685,8.210],[124.700,8.208],[124.715,8.210],
-          [124.720,8.205],[124.712,8.198],[124.700,8.195],[124.685,8.195],
-          [124.672,8.198],[124.665,8.208],[124.670,8.215]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Landslide-prone area — basin interior",
-        "type": "landslide_prone",
-        "hazard_level": "high",
-        "source": "DENR-MGB landslide prone area map",
-        "description": "High susceptibility to landslides across the basin interior. Steep terrain, fractured geology and heavy rainfall combine to create risk across most of the upland area. Particular concentration along major ridge systems.",
-        "coverage": "Majority of basin upland area"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [124.698,8.608],[124.718,8.612],[124.738,8.608],[124.758,8.602],
-          [124.778,8.595],[124.795,8.585],[124.808,8.570],[124.815,8.550],
-          [124.820,8.528],[124.822,8.505],[124.820,8.480],[124.815,8.455],
-          [124.812,8.428],[124.814,8.400],[124.818,8.372],[124.820,8.345],
-          [124.818,8.318],[124.812,8.292],[124.805,8.268],[124.795,8.248],
-          [124.782,8.232],[124.768,8.220],[124.752,8.212],[124.735,8.208],
-          [124.718,8.208],[124.702,8.212],[124.688,8.220],[124.675,8.232],
-          [124.665,8.248],[124.658,8.265],[124.655,8.285],[124.654,8.308],
-          [124.655,8.332],[124.658,8.355],[124.662,8.378],[124.668,8.400],
-          [124.674,8.422],[124.678,8.445],[124.680,8.468],[124.679,8.490],
-          [124.676,8.512],[124.672,8.532],[124.670,8.552],[124.672,8.572],
-          [124.680,8.590],[124.690,8.604],[124.698,8.608]
-        ]]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Tagoloan River — main stem",
-        "type": "river",
-        "stream_order": 1,
-        "length_km": 115,
-        "flows_to": "Macajalar Bay",
-        "source_area": "Mt. Kalatungan range"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [124.748,8.612],[124.745,8.582],[124.748,8.555],[124.752,8.520],
-          [124.748,8.488],[124.742,8.455],[124.738,8.420],[124.735,8.385],
-          [124.730,8.350],[124.726,8.312],[124.722,8.278],[124.718,8.245],
-          [124.712,8.215]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "West tributary 1 — Manolo Fortich area", "type": "river", "stream_order": 2 },
-      "geometry": { "type": "LineString", "coordinates": [[124.638,8.540],[124.655,8.528],[124.675,8.515],[124.698,8.505],[124.718,8.498]] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "West tributary 2", "type": "river", "stream_order": 2 },
-      "geometry": { "type": "LineString", "coordinates": [[124.622,8.418],[124.640,8.412],[124.662,8.406],[124.688,8.400],[124.718,8.395]] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "East tributary 1 — Impasug-Ong drainage", "type": "river", "stream_order": 2 },
-      "geometry": { "type": "LineString", "coordinates": [[124.858,8.575],[124.845,8.552],[124.832,8.528],[124.818,8.505],[124.800,8.480],[124.782,8.460],[124.762,8.445],[124.748,8.438]] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "East tributary 2", "type": "river", "stream_order": 2 },
-      "geometry": { "type": "LineString", "coordinates": [[124.855,8.445],[124.840,8.438],[124.820,8.430],[124.800,8.425],[124.780,8.420],[124.760,8.418],[124.745,8.418]] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "East tributary 3 — Malaybalay drainage", "type": "river", "stream_order": 2 },
-      "geometry": { "type": "LineString", "coordinates": [[124.852,8.308],[124.838,8.302],[124.818,8.295],[124.798,8.290],[124.778,8.288],[124.758,8.288],[124.742,8.290]] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Telemetry raingauge — Brgy. San Roque",
-        "type": "telemetry_raingauge",
-        "operator": "PAGASA",
-        "latitude": 8.525,
-        "longitude": 124.728,
-        "data_transmission": "real-time",
-        "network": "Tagoloan River Basin flood warning network"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.728, 8.525] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Telemetry raingauge — San Luis Malit-bog",
-        "type": "telemetry_raingauge",
-        "operator": "PAGASA",
-        "latitude": 8.502,
-        "longitude": 124.818,
-        "data_transmission": "real-time",
-        "notes": "High-elevation headwater monitoring"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.818, 8.502] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Telemetry raingauge — Bukidnon lowlands",
-        "type": "telemetry_raingauge",
-        "operator": "PAGASA",
-        "latitude": 8.232,
-        "longitude": 124.758
-      },
-      "geometry": { "type": "Point", "coordinates": [124.758, 8.232] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Telemetry raingauge — Malaybalay approach",
-        "type": "telemetry_raingauge",
-        "operator": "PAGASA",
-        "latitude": 8.238,
-        "longitude": 124.848,
-        "notes": "Data shared with Bukidnon provincial DRRMO"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.848, 8.238] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Synoptic station — Manolo Fortich / Alag",
-        "type": "synoptic_station",
-        "operator": "PAGASA",
-        "latitude": 8.382,
-        "longitude": 124.720,
-        "parameters": ["wind speed", "wind direction", "temperature", "humidity", "pressure", "rainfall"],
-        "data_recipient": "PAGASA Cagayan de Oro"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.720, 8.382] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Synoptic station — Brgy. San Vicente",
-        "type": "synoptic_station",
-        "operator": "PAGASA",
-        "latitude": 8.328,
-        "longitude": 124.800,
-        "notes": "Mid-basin reference for NWP model calibration"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.800, 8.328] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Water level station — Tagoloan bridge",
-        "type": "water_level_station",
-        "operator": "PAGASA",
-        "latitude": 8.225,
-        "longitude": 124.708,
-        "trigger_levels": { "alert": "1.5m", "warning": "2.5m", "critical": "3.5m" },
-        "data_transmission": "real-time"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.708, 8.225] }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "name": "Water level station — mid-river",
-        "type": "water_level_station",
-        "operator": "PAGASA",
-        "latitude": 8.278,
-        "longitude": 124.840,
-        "notes": "Used for flood routing and travel-time estimation"
-      },
-      "geometry": { "type": "Point", "coordinates": [124.840, 8.278] }
-    }
-  ]
-}'''
-
-def load_tagoloan_geojson():
-    """Parse the hard‑coded GeoJSON string into a GeoDataFrame."""
-    data = json.loads(TAGOLOAN_GEOJSON_STR)
-    features = data["features"]
-    geom_list = []
-    props_list = []
-    for feat in features:
-        geom = shape(feat["geometry"])
-        props = feat["properties"]
-        geom_list.append(geom)
-        props_list.append(props)
-    gdf = gpd.GeoDataFrame(props_list, geometry=geom_list, crs="EPSG:4326")
-    return gdf
-
-def build_river_basin_map(_gdf):
-    """Build a Plotly Mapbox figure from the Tagoloan River Basin GeoDataFrame."""
-    fig = go.Figure()
-
-    # Basin boundary
-    basin = _gdf[_gdf["type"] == "basin_boundary"]
-    for _, row in basin.iterrows():
-        if row.geometry.geom_type == "Polygon":
-            x, y = row.geometry.exterior.coords.xy
-            fig.add_trace(go.Scattermapbox(
-                lon=list(x), lat=list(y),
-                mode="lines", line=dict(width=2, color="blue"),
-                name="Basin boundary", hoverinfo="text",
-                text=f"{row['name']}<br>Area: {row['area_km2']} km²",
-                showlegend=False
-            ))
-
-    # Flood‑prone areas
-    flood = _gdf[_gdf["type"] == "flood_prone"]
-    for _, row in flood.iterrows():
-        if row.geometry.geom_type == "Polygon":
-            x, y = row.geometry.exterior.coords.xy
-            fig.add_trace(go.Scattermapbox(
-                lon=list(x), lat=list(y),
-                mode="lines", fill="toself",
-                fillcolor="rgba(255,0,0,0.4)",
-                line=dict(width=0),
-                name="Flood prone", hoverinfo="text",
-                text=f"{row['name']}<br>Hazard: {row['hazard_level']}",
-                showlegend=False
-            ))
-
-    # Landslide‑prone area
-    landslide = _gdf[_gdf["type"] == "landslide_prone"]
-    for _, row in landslide.iterrows():
-        if row.geometry.geom_type == "Polygon":
-            x, y = row.geometry.exterior.coords.xy
-            fig.add_trace(go.Scattermapbox(
-                lon=list(x), lat=list(y),
-                mode="lines", fill="toself",
-                fillcolor="rgba(139,69,19,0.3)",
-                line=dict(width=0),
-                name="Landslide prone", hoverinfo="text",
-                text=row["name"],
-                showlegend=False
-            ))
-
-    # Rivers
-    rivers = _gdf[_gdf["type"] == "river"]
-    for _, row in rivers.iterrows():
-        if row.geometry.geom_type == "LineString":
-            x, y = row.geometry.coords.xy
-            width = 3 if row.get("stream_order") == 1 else 1.5
-            fig.add_trace(go.Scattermapbox(
-                lon=list(x), lat=list(y),
-                mode="lines", line=dict(width=width, color="blue"),
-                name=row["name"], hoverinfo="text",
-                text=row["name"],
-                showlegend=False
-            ))
-
-    # Raingauges
-    raingauges = _gdf[_gdf["type"] == "telemetry_raingauge"]
-    for _, row in raingauges.iterrows():
-        fig.add_trace(go.Scattermapbox(
-            lon=[row.geometry.x], lat=[row.geometry.y],
-            mode="markers+text",
-            marker=dict(size=12, color="cyan", symbol="circle"),
-            text=[row["name"]], textposition="top center",
-            name="Raingauge", hoverinfo="text",
-            hovertext=f"{row['name']}<br>Operator: {row['operator']}",
-            showlegend=False
-        ))
-
-    # Synoptic stations
-    synop = _gdf[_gdf["type"] == "synoptic_station"]
-    for _, row in synop.iterrows():
-        fig.add_trace(go.Scattermapbox(
-            lon=[row.geometry.x], lat=[row.geometry.y],
-            mode="markers+text",
-            marker=dict(size=12, color="green", symbol="diamond"),
-            text=[row["name"]], textposition="top center",
-            name="Synoptic station", hoverinfo="text",
-            hovertext=f"{row['name']}",
-            showlegend=False
-        ))
-
-    # Water level stations
-    wl = _gdf[_gdf["type"] == "water_level_station"]
-    for _, row in wl.iterrows():
-        # Safely extract alert level
-        trigger_info = row.get('trigger_levels', {})
-        if isinstance(trigger_info, dict):
-            alert = trigger_info.get('alert', 'N/A')
-        else:
-            alert = 'N/A'
-        fig.add_trace(go.Scattermapbox(
-            lon=[row.geometry.x], lat=[row.geometry.y],
-            mode="markers+text",
-            marker=dict(size=12, color="orange", symbol="triangle-up"),
-            text=[row["name"]], textposition="top center",
-            name="Water level station", hoverinfo="text",
-            hovertext=f"{row['name']}<br>Alert: {alert}",
-            showlegend=False
-        ))
-
-    fig.update_layout(
-        mapbox=dict(
-            style="carto-positron",
-            center=dict(lat=8.5390, lon=124.7540),
-            zoom=11
-        ),
-        margin=dict(l=0, r=0, t=30, b=0),
-        height=600,
-        title="Tagoloan River Basin Hazard Map"
-    )
-    return fig
-
-# ==============================================================================
-# 9. STREAMLIT APP
+# 8. STREAMLIT APP
 # ==============================================================================
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
@@ -1329,12 +896,26 @@ reloc_pct = metrics['Projected to Relocate (%)']
 evac_pct = metrics['Evacuating (%)']
 resist_pct = metrics['Resisting LGU (%)']
 
-# ---- Interactive Map ----
-st.subheader("🗺️ Tagoloan River Basin Hazard Map")
-gdf = load_tagoloan_geojson()
-fig_map = build_river_basin_map(gdf)
-st.plotly_chart(fig_map, use_container_width=True)
-st.caption("Basin boundary (blue), flood‑prone areas (red), landslide‑prone (brown), rivers (blue lines), monitoring stations (cyan/green/orange markers).")
+# ---- Official Static Map (Zoomable) ----
+st.subheader("🗺️ Tagoloan River Basin (Official DOST-PAGASA Map)")
+try:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get("https://pubfiles.pagasa.dost.gov.ph/pagasaweb/images/basins/tagoloan-river-basin.jpg", headers=headers)
+    img = Image.open(BytesIO(resp.content))
+    fig_map = px.imshow(img)
+    fig_map.update_layout(
+        title="Tagoloan River Basin (Official DOST-PAGASA Map)",
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=600,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False)
+    )
+    fig_map.update_xaxes(showgrid=False)
+    fig_map.update_yaxes(showgrid=False)
+    st.plotly_chart(fig_map, use_container_width=True)
+    st.caption("Official DOST-PAGASA map. Use the toolbar to zoom and pan.")
+except Exception as e:
+    st.warning("Official map could not be loaded. Please check the image URL.")
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
@@ -1707,3 +1288,5 @@ if len(twin.history) > 1:
         st.caption(f"⚠️ **{barangay_title}:** Resistance is growing; potential trigger events (like demolition threats) may be escalating tensions.")
 else:
     st.info("Run at least two steps to see the timeline.")
+
+st.markdown("---")
