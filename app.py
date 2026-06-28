@@ -926,13 +926,19 @@ def build_river_basin_map(_gdf):
     # Water level stations
     wl = _gdf[_gdf["type"] == "water_level_station"]
     for _, row in wl.iterrows():
+        # Safely extract alert level
+        trigger_info = row.get('trigger_levels', {})
+        if isinstance(trigger_info, dict):
+            alert = trigger_info.get('alert', 'N/A')
+        else:
+            alert = 'N/A'
         fig.add_trace(go.Scattermapbox(
             lon=[row.geometry.x], lat=[row.geometry.y],
             mode="markers+text",
             marker=dict(size=12, color="orange", symbol="triangle-up"),
             text=[row["name"]], textposition="top center",
             name="Water level station", hoverinfo="text",
-            hovertext=f"{row['name']}<br>Alert: {row.get('trigger_levels', {}).get('alert', 'N/A')}",
+            hovertext=f"{row['name']}<br>Alert: {alert}",
             showlegend=False
         ))
 
