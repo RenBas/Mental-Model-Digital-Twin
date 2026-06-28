@@ -597,7 +597,7 @@ defaults = {
     'auto_log': True,
     'prev_k_mode': "Auto (silhouette)",
     'dark_mode': False,
-    'last_processed_hash': None   # to prevent re-calibration loops
+    'last_processed_hash': None
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -629,7 +629,7 @@ with st.sidebar:
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                # Only trigger calibration if data has changed (compare hashes)
+                # Only trigger calibration if data has changed
                 current_hash = hashlib.md5(df_raw.to_csv(index=False).encode()).hexdigest()
                 if st.session_state.last_processed_hash != current_hash:
                     st.session_state.raw_data = df_raw
@@ -980,11 +980,10 @@ if st.session_state.get('needs_calibration') and st.session_state.get('raw_data'
             st.error(f"Calibration failed: {e}")
         finally:
             st.session_state.needs_calibration = False
-            st.rerun()
+            # No st.rerun() – the dashboard will update immediately
     else:
         st.warning("Not enough respondents for the selected scope.")
         st.session_state.needs_calibration = False
-        st.rerun()
 
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
