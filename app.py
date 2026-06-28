@@ -12,7 +12,6 @@ from bs4 import BeautifulSoup
 import re
 import json
 import geopandas as gpd
-from io import BytesIO
 from shapely.geometry import shape
 
 # ==============================================================================
@@ -837,7 +836,6 @@ def load_tagoloan_geojson():
     gdf = gpd.GeoDataFrame(props_list, geometry=geom_list, crs="EPSG:4326")
     return gdf
 
-@st.cache_data
 def build_river_basin_map(_gdf):
     """Build a Plotly Mapbox figure from the Tagoloan River Basin GeoDataFrame."""
     fig = go.Figure()
@@ -849,7 +847,7 @@ def build_river_basin_map(_gdf):
             x, y = row.geometry.exterior.coords.xy
             fig.add_trace(go.Scattermapbox(
                 lon=list(x), lat=list(y),
-                mode="lines", line=dict(width=2, color="blue", dash="dash"),
+                mode="lines", line=dict(width=2, color="blue"),
                 name="Basin boundary", hoverinfo="text",
                 text=f"{row['name']}<br>Area: {row['area_km2']} km²",
                 showlegend=False
@@ -1330,7 +1328,7 @@ st.subheader("🗺️ Tagoloan River Basin Hazard Map")
 gdf = load_tagoloan_geojson()
 fig_map = build_river_basin_map(gdf)
 st.plotly_chart(fig_map, use_container_width=True)
-st.caption("Basin boundary (dashed blue), flood‑prone areas (red), landslide‑prone (brown), rivers (blue lines), monitoring stations (cyan/green/orange markers).")
+st.caption("Basin boundary (blue), flood‑prone areas (red), landslide‑prone (brown), rivers (blue lines), monitoring stations (cyan/green/orange markers).")
 
 # ---- Basic Behavioral Outcomes ----
 st.subheader("Community Behavioral Outcomes")
