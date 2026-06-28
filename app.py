@@ -78,7 +78,8 @@ class ResidentAgent:
         prevention = self.node_states.get("Prevention and flooding", 50.0)
         lgu_view = self.node_states.get("Viewpoints towards LGU", 50.0)
         evac_utility = (coping*0.4) + (prevention*0.3) + (lgu_view*0.3)
-        self.will_evacuate = evac_utility >= (50.0 - (flood_severity * 30.0))
+        # Recalibrated threshold: high at low severity, low at high severity
+        self.will_evacuate = evac_utility >= (50.0 + 20.0 * (1.0 - flood_severity))
 
         preference = self.node_states.get("Preference and adaptation", 50.0)
         self.is_adapting_in_place = (not self.has_relocated) and (preference >= 40.0)
@@ -913,7 +914,7 @@ try:
     fig_map.update_xaxes(showgrid=False)
     fig_map.update_yaxes(showgrid=False)
     st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
-    st.caption("Official DOST-PAGASA map. Use the toolbar to zoom and pan.")
+    st.caption("Official DOST-PAGASA map. Use the toolbar or mouse wheel to zoom and pan.")
 except Exception as e:
     st.warning("Official map could not be loaded. Please check the image URL.")
 
@@ -1150,7 +1151,7 @@ if pop == 0:
 else:
     insight_parts = []
     insight_parts.append(
-        f"**{barangay_title}** has a simulated population of **{pop:,} residents**. "
+        f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
         f"Under the current PAGASA advisory ({label}, severity {flood_sev:.2f}), "
         f"**{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
         f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
