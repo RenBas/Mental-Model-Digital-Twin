@@ -80,7 +80,6 @@ class ResidentAgent:
         prevention = self.node_states.get("Prevention and flooding", 50.0)
         lgu_view = self.node_states.get("Viewpoints towards LGU", 50.0)
         evac_utility = (coping*0.4) + (prevention*0.3) + (lgu_view*0.3)
-        # Recalibrated threshold: high at low severity, low at high severity
         self.will_evacuate = evac_utility >= (50.0 + 20.0 * (1.0 - flood_severity))
 
         preference = self.node_states.get("Preference and adaptation", 50.0)
@@ -571,6 +570,7 @@ def apply_dark_mode():
 
 apply_dark_mode()
 
+# ---------- Session State Initialisation ----------
 if 'twin' not in st.session_state:
     st.session_state.twin = DigitalTwin(
         nodes=base_nodes,
@@ -580,18 +580,27 @@ if 'twin' not in st.session_state:
         flood_severity=0.0,
         lgu_threat=False
     )
-    st.session_state.data_calibrated = False
-    st.session_state.respondent_clusters = None
-    st.session_state.current_barangay = "All Barangays"
-    st.session_state.raw_data = None
-    st.session_state.disable_flashing = False
-    st.session_state.use_pagasa_auto = True
-    st.session_state.pagasa_severity = None
-    st.session_state.prev_pagasa_severity = None
-    st.session_state.needs_calibration = False
-    st.session_state.baseline_params = None
-    st.session_state.log_entries = []
-    st.session_state.auto_log = True
+
+# Ensure all expected keys exist (backwards compatibility)
+defaults = {
+    'data_calibrated': False,
+    'respondent_clusters': None,
+    'current_barangay': "All Barangays",
+    'raw_data': None,
+    'disable_flashing': False,
+    'use_pagasa_auto': True,
+    'pagasa_severity': None,
+    'prev_pagasa_severity': None,
+    'needs_calibration': False,
+    'baseline_params': None,
+    'log_entries': [],
+    'auto_log': True,
+    'prev_k_mode': "Auto (silhouette)",
+    'dark_mode': False
+}
+for key, val in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -662,7 +671,6 @@ with st.sidebar:
         if k_mode == "Manual":
             manual_k = st.slider("Number of clusters (K)", 2, 5, 3, key="manual_k_slider")
 
-        # Detect changes in K‑mode to trigger recalibration
         if 'prev_k_mode' not in st.session_state:
             st.session_state.prev_k_mode = k_mode
         if k_mode != st.session_state.prev_k_mode:
@@ -726,16 +734,13 @@ with st.sidebar:
         label = "No data"
         color = "grey"
 
-    # Auto‑mode: set twin severity if auto is active
     if st.session_state.use_pagasa_auto and pagasa_severity is not None:
         st.session_state.twin.flood_severity = pagasa_severity
 
-    # Auto‑log if severity changed
     if st.session_state.auto_log and pagasa_severity is not None:
         if st.session_state.prev_pagasa_severity is None:
             st.session_state.prev_pagasa_severity = pagasa_severity
         elif pagasa_severity != st.session_state.prev_pagasa_severity:
-            # Log snapshot
             metrics = st.session_state.twin.get_metrics()
             advanced = st.session_state.twin.get_advanced_metrics()
             log_entry = {
@@ -755,7 +760,6 @@ with st.sidebar:
             st.session_state.log_entries.append(log_entry)
             st.session_state.prev_pagasa_severity = pagasa_severity
 
-    # Gauge display
     flash_class = ""
     if pagasa_severity is not None and not st.session_state.disable_flashing:
         if pagasa_severity >= 0.60:
@@ -802,7 +806,6 @@ with st.sidebar:
 
     st.session_state.disable_flashing = st.checkbox("Disable flashing", value=st.session_state.disable_flashing, key="disable_flash_check")
 
-    # Manual override toggle
     st.markdown("---")
     st.subheader("🧪 Simulated Flood Severity")
     st.session_state.use_pagasa_auto = st.checkbox("Auto‑mode (use PAGASA advisory)", value=st.session_state.use_pagasa_auto)
@@ -814,7 +817,6 @@ with st.sidebar:
                               help="0 = light rain, 1 = extreme rainfall.")
         st.session_state.twin.flood_severity = flood_sev
 
-    # Rainfall conversion and simulation gauge
     if flood_sev <= 0.25:
         rainfall_mm = flood_sev * 40
         label = "Light rain"
@@ -845,7 +847,7 @@ with st.sidebar:
             st.session_state.twin.reset(new_flood_severity=flood_sev, new_lgu_threat=lgu_threat)
             st.rerun()
 
-    # Inactive Water‑Level Gauge (future)
+    # Inactive Water‑Level Gauge
     st.markdown("---")
     st.subheader("🌊 Tagoloan River Water Level")
     wl_gauge = f"""
@@ -944,14 +946,11 @@ if st.session_state.get('needs_calibration') and st.session_state.get('raw_data'
                     dominant_driver=driver
                 )
 
-            # Generate stable seed from data hash
             data_hash = hashlib.md5(df_filtered.to_csv(index=False).encode()).hexdigest()
             seed = int(data_hash, 16) % (2**32)
 
-            # Baseline severity: use current PAGASA advisory if auto, else current slider value
             baseline_severity = st.session_state.twin.flood_severity
 
-            # Build new twin with baseline
             st.session_state.twin = DigitalTwin(
                 nodes=base_nodes,
                 edges=base_edges,
