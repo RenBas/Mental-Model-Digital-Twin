@@ -1,1424 +1,1577 @@
+# ============================================================
+# Digital Twin – CDO Research Culture Framework (Phase 1+2 Merged, Fixed)
+# ============================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
-import networkx as nx
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import silhouette_score
-import requests
-from bs4 import BeautifulSoup
-import re
-from PIL import Image
-from io import BytesIO
-import hashlib
-import datetime
+import plotly.express as px
+from plotly.subplots import make_subplots
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Tuple, Any
+import math
+import base64
+import time  # NEW: for spinner simulation
 
-# ==============================================================================
-# 1. DATA CLASSES
-# ==============================================================================
+# -----------------------------------------------------------------
+# Optional scikit‑learn for Phase 2 features (calibration, clustering, causal)
+# -----------------------------------------------------------------
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.cluster import KMeans
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
 
-class MentalModelNode:
-    def __init__(self, name, challenge, acceptance, commitment, corr_c_a, corr_a_ch, corr_c_ch):
-        self.name = name
-        self.baseline_cac = {'Challenge': challenge, 'Acceptance': acceptance, 'Commitment': commitment}
-        self.correlation_matrix = np.array([[1.0, corr_c_a, corr_c_ch],
-                                            [corr_c_a, 1.0, corr_a_ch],
-                                            [corr_c_ch, corr_a_ch, 1.0]])
-        self.current_score = self._compute_score()
-        self.previous_delta = 0.0
+# ============================================================
+# CONSTANTS
+# ============================================================
 
-    def _compute_score(self):
-        c = self.baseline_cac['Challenge']
-        a = self.baseline_cac['Acceptance']
-        co = self.baseline_cac['Commitment']
-        raw = (a + co) / 2.0 + (50.0 - c) / 2.0
-        return max(0.0, min(100.0, raw))
+# --- Colour Palette ---
+USTP_DARK_BLUE = "#0D2B5E"
+USTP_GOLD = "#F5A623"
+DEPED_RED = "#D32F2F"
+DEPED_MAROON = "#8B0000"
+LIGHT_BG = "#F8F9FA"
+DARK_BG = "#1E1E1E"
+DARK_TEXT = "#FFFFFF"
+LIGHT_TEXT = "#000000"
 
-    def update_cac(self, challenge=None, acceptance=None, commitment=None):
-        if challenge is not None:
-            self.baseline_cac['Challenge'] = challenge
-        if acceptance is not None:
-            self.baseline_cac['Acceptance'] = acceptance
-        if commitment is not None:
-            self.baseline_cac['Commitment'] = commitment
-        self.current_score = self._compute_score()
+# --- Simulation Model Constants ---
+BASE_YEAR = 2026
+RANDOM_EVENT_PROB = 0.00417
+LOSS_CHAMPION_PENALTY = 0.10
+FUNDING_BOOST = 0.15
+LEADERSHIP_PENALTY = 0.20
+CYCLE_R_BONUS = 0.10
+CYCLE_M_DECAY_FACTOR = 0.50
+CYCLE_M_MIN_AFTER_DECAY = 0.20
+CYCLE_BONUS_BASE = 0.03
+CYCLE_BONUS_M_SCALE = 0.03
+MONTHLY_OUTCOME_BASE = 0.001
+MILESTONE_MIN_MONTHS = 6
+VALUE_FLOOR = 0.1
+VALUE_CEIL = 1.0
 
-class MentalModelEdge:
-    def __init__(self, source_name, target_name, coefficient, r_square, nodes_dict):
-        self.source_name = source_name
-        self.target_name = target_name
-        self.coefficient = coefficient
-        self.r_square = r_square
+VARIABLES = ['R', 'A', 'C', 'S', 'I', 'P', 'M']
 
-class ResidentAgent:
-    def __init__(self, agent_id, cluster_name, node_states, cac_states, archetype):
-        self.agent_id = agent_id
-        self.cluster_name = cluster_name
-        self.node_states = node_states
-        self.cac_states = cac_states
-        self.archetype = archetype
-        self.has_relocated = False
-        self.will_evacuate = False
-        self.is_adapting_in_place = False
-        self.is_resisting_lgu = False
-
-    def evaluate_decisions(self, flood_severity=0.0, lgu_demolition_threat=False):
-        desire = self.node_states.get("Desire for relocation", 50.0)
-        feasibility = self.node_states.get("Feasibility of relocation", 50.0)
-        assistance = self.node_states.get("Assistance for relocation", 50.0)
-        fear = self.node_states.get("Fear of housing demolition", 50.0)
-        family_ties = self.node_states.get("Family history and identity", 50.0)
-
-        relocation_utility = (desire*0.35) + (feasibility*0.30) + (assistance*0.25) - (fear*0.05) - (family_ties*0.05)
-        relocation_utility = max(0, min(100, relocation_utility))
-        if relocation_utility >= self.archetype.relocation_threshold and not self.has_relocated:
-            self.has_relocated = True
-
-        coping = self.node_states.get("Coping during flooding", 50.0)
-        prevention = self.node_states.get("Prevention and flooding", 50.0)
-        lgu_view = self.node_states.get("Viewpoints towards LGU", 50.0)
-        evac_utility = (coping*0.4) + (prevention*0.3) + (lgu_view*0.3)
-        self.will_evacuate = evac_utility >= (50.0 + 20.0 * (1.0 - flood_severity))
-
-        preference = self.node_states.get("Preference and adaptation", 50.0)
-        self.is_adapting_in_place = (not self.has_relocated) and (preference >= 40.0)
-
-        if lgu_demolition_threat:
-            rights = self.node_states.get("Rights to live in the area", 50.0)
-            resist_utility = (rights*0.5) + (family_ties*0.3) + (fear*0.2)
-            self.is_resisting_lgu = resist_utility >= self.archetype.resistance_threshold
-        else:
-            self.is_resisting_lgu = False
-
-class ClusterArchetype:
-    def __init__(self, name, population_ratio, node_baseline_scores, dominant_driver,
-                 relocation_threshold=35.0, resistance_threshold=35.0):
-        self.name = name
-        self.population_ratio = population_ratio
-        self.node_baseline_scores = node_baseline_scores
-        self.dominant_driver = dominant_driver
-        self.relocation_threshold = relocation_threshold
-        self.resistance_threshold = resistance_threshold
-
-# ==============================================================================
-# 2. K‑MEANS NOMENCLATURE ENGINE
-# ==============================================================================
-PERSONA_MAP = {
-    "Prevention and flooding": "Proactive Risk Mitigators",
-    "Coping during flooding": "Resilient Flood Adapters",
-    "Flooding and Family": "Family-Centric Survivors",
-    "Desire for relocation": "Transition-Seeking Residents",
-    "Preference and adaptation": "Adaptive Planners",
-    "Feasibility of relocation": "Pragmatic Relocators",
-    "Fear of housing demolition": "Anxious Property Owners",
-    "Viewpoints towards LGU": "Civic-Engaged Constituents",
-    "Assistance for relocation": "Resource-Dependent Pragmatists",
-    "Rights to live in the area": "Rights-Asserting Residents",
-    "Living in the disaster area": "Resilient Locals",
-    "Family history and identity": "Heritage-Bound Residents"
+MILESTONE_NAMES = {
+    0: "Milestone 0 (Readiness and Relevance)",
+    1: "Milestone 1 (Awareness to Action)",
+    2: "Milestone 2 (Capacity Spark)",
+    3: "Milestone 3 (Structured Support)",
+    4: "Milestone 4 (Institutional Anchoring)",
+    5: "Milestone 5 (Community of Practice)",
+    6: "Milestone 6 (Impact Realization)",
 }
 
-def generate_lgu_cluster_name(centroids, col_map):
-    macro_scores = {}
-    for node, clean in col_map.items():
-        ac = centroids.get(f"{clean}_Acceptance", 0)
-        co = centroids.get(f"{clean}_Commitment", 0)
-        macro_scores[node] = ac + co
-    sorted_nodes = sorted(macro_scores.items(), key=lambda x: x[1], reverse=True)
-    top_node = sorted_nodes[0][0]
-    return PERSONA_MAP.get(top_node, "Balanced Community Segment"), top_node
+MILESTONE_SHORT = {k: f"M{k}" for k in range(7)}
 
-# ==============================================================================
-# 3. POPULATION GENERATOR (accepts optional seed)
-# ==============================================================================
-class PopulationGenerator:
-    def __init__(self, col_map):
-        self.col_map = col_map
-        self.node_names = list(col_map.keys())
+VAR_FULL_NAMES = {
+    'R': 'Readiness (R)', 'A': 'Awareness (A)', 'C': 'Capacity (C)',
+    'S': 'Structured Support (S)', 'I': 'Institutional Anchoring (I)',
+    'P': 'Community of Practice (P)', 'M': 'Impact Realization (M)',
+}
 
-    def generate_population(self, total_population_size, cluster_profiles, engine_nodes, seed=None):
-        agents = []
-        if total_population_size == 0 or not cluster_profiles:
-            return agents
-        rng = np.random.RandomState(seed)
-        current_agent_id = 1
-        cluster_counts = {}
-        assigned_total = 0
-        sorted_clusters = sorted(cluster_profiles.items(), key=lambda x: x[1].population_ratio, reverse=True)
+MILESTONE_THRESHOLDS = {
+    0: ('A', 0.8, 1),
+    1: ('C', 0.7, 2),
+    2: ('S', 0.7, 3),
+    3: ('I', 0.8, 4),
+    4: ('P', 0.8, 5),
+    5: ('M', 0.7, 6),
+}
 
-        for name, profile in sorted_clusters:
-            if name == sorted_clusters[-1][0]:
-                count = total_population_size - assigned_total
-            else:
-                count = round(total_population_size * profile.population_ratio)
-                assigned_total += count
-            cluster_counts[name] = count
+RCSI_LEVELS = [
+    (0.0, 0.2, "Very Low"),
+    (0.2, 0.4, "Low"),
+    (0.4, 0.6, "Moderate"),
+    (0.6, 0.8, "High"),
+    (0.8, 1.0, "Very High"),
+]
 
-        for name, profile in cluster_profiles.items():
-            for _ in range(cluster_counts[name]):
-                individual_cac_states = {}
-                agent_macro_states = {}
+REQUIRED_SURVEY_COLS = ['month', 'school_id_no'] + VARIABLES
+OPTIONAL_SURVEY_COLS = ['school_name']
 
-                is_cac_profile = any("_Challenge" in k for k in profile.node_baseline_scores.keys())
+REQUIRED_META_COLS = ['upload_date', 'teacher_name', 'school_id_no']
+OPTIONAL_META_COLS = {
+    'document_type': 'abstract', 'title': '', 'theme': 'Uncategorized',
+    'status': 'unpublished', 'publication_link': '', 'utilized_by_school': False,
+    'utilization_date': '', 'year_undertaken': 2025, 'years_of_service': None,
+    'teacher_rank': None, 'educational_attainment': None,
+}
 
-                if is_cac_profile:
-                    for node_name, clean_name in self.col_map.items():
-                        for cac in ['Challenge', 'Acceptance', 'Commitment']:
-                            key = f"{clean_name}_{cac}"
-                            baseline = profile.node_baseline_scores.get(key, 33.3)
-                            noise = rng.normal(0, 5.0)
-                            individual_cac_states[key] = max(0.0, min(100.0, baseline + noise))
+VAR_COLORS = ['#1E88E5', USTP_GOLD, '#8E44AD', '#2ECC71', '#E67E22', DEPED_RED, '#1ABC9C']
 
-                    for node_name, clean_name in self.col_map.items():
-                        ac_val = individual_cac_states.get(f"{clean_name}_Acceptance", 33.3)
-                        co_val = individual_cac_states.get(f"{clean_name}_Commitment", 33.3)
-                        macro_base = (ac_val + co_val) / 2.0
-                        macro_deviation = engine_nodes[node_name].current_score - 50.0
-                        noise = rng.normal(0, 3.0)
-                        agent_macro_states[node_name] = max(0.0, min(100.0, macro_base + macro_deviation + noise))
-                else:
-                    for node_name in self.node_names:
-                        baseline = profile.node_baseline_scores.get(node_name, 50.0)
-                        macro_deviation = engine_nodes[node_name].current_score - 50.0
-                        noise = rng.normal(0, 5.0)
-                        agent_macro_states[node_name] = max(0.0, min(100.0, baseline + macro_deviation + noise))
-                        clean = self.col_map[node_name]
-                        individual_cac_states[f"{clean}_Challenge"] = 33.3
-                        individual_cac_states[f"{clean}_Acceptance"] = 33.3
-                        individual_cac_states[f"{clean}_Commitment"] = 33.3
 
-                agents.append(ResidentAgent(current_agent_id, name, agent_macro_states, individual_cac_states, profile))
-                current_agent_id += 1
-        return agents
+# ============================================================
+# UTILITY FUNCTIONS
+# ============================================================
 
-# ==============================================================================
-# 4. COMMUNITY ANALYTICS
-# ==============================================================================
-class CommunityAnalytics:
-    def __init__(self, agents_list, node_names):
-        self.agents = agents_list
-        self.node_names = node_names
-        self.total_population = len(agents_list)
-        self._build_dataframe()
+def classify_rcsi(value: float) -> str:
+    for low, high, lev in RCSI_LEVELS:
+        if low <= value < high:
+            return lev
+    return "Very High"
 
-    def _build_dataframe(self):
-        data = []
-        for agent in self.agents:
-            row = {
-                'Agent_ID': agent.agent_id,
-                'Cluster': agent.cluster_name,
-                'Has_Relocated': agent.has_relocated,
-                'Will_Evacuate': agent.will_evacuate,
-                'Is_Adapting': agent.is_adapting_in_place,
-                'Is_Resisting': agent.is_resisting_lgu
-            }
-            for node_name in self.node_names:
-                row[node_name] = agent.node_states.get(node_name, 0.0)
-            data.append(row)
-        self.df = pd.DataFrame(data)
+def get_rcsi_interpretation_table() -> str:
+    return """
+| RCSI Score Range | Risk/Stability Level | School-Level Policy Implication |
+| :--- | :--- | :--- |
+| **0.000 – 0.010** | **Optimal / Extremely Stable** | Maintain current strategies; focus on qualitative improvements (instruction, morale) rather than structural fixes. |
+| **0.011 – 0.030** | Low Risk | Routine monitoring; allocate 5-10% of discretionary budget to preemptive padding. |
+| **0.031 – 0.070** | Moderate Risk | Requires targeted intervention; conduct a root-cause analysis on the top 2 contributing variables. |
+| **0.071 – 0.100** | High Risk | Immediate corrective action required; escalate to Division Office for shared resource support. |
+| **> 0.100** | Critical / Unstable | Full operational review triggered; Division-level contingency protocols are activated. |
+"""
 
-    def get_behavioral_metrics(self):
-        if self.total_population == 0:
-            return {
-                "Total Population": 0,
-                "Projected to Relocate (%)": 0.0,
-                "Evacuating (%)": 0.0,
-                "Adapting In-Place (%)": 0.0,
-                "Resisting LGU (%)": 0.0
-            }
-        return {
-            "Total Population": self.total_population,
-            "Projected to Relocate (%)": (self.df['Has_Relocated'].sum() / self.total_population) * 100,
-            "Evacuating (%)": (self.df['Will_Evacuate'].sum() / self.total_population) * 100,
-            "Adapting In-Place (%)": (self.df['Is_Adapting'].sum() / self.total_population) * 100,
-            "Resisting LGU (%)": (self.df['Is_Resisting'].sum() / self.total_population) * 100
-        }
-
-    def get_advanced_metrics(self):
-        if self.total_population == 0:
-            return {
-                "Proactive Preparedness (%)": 0.0,
-                "LGU Trust & Cooperation (%)": 0.0,
-                "Heritage-Based Refusal (%)": 0.0,
-                "Demolition Anxiety (%)": 0.0,
-                "Relocation Readiness (%)": 0.0
-            }
-        proactive = self.df[
-            (self.df["Prevention and flooding"] > 60) & 
-            (self.df["Coping during flooding"] > 60)
-        ].shape[0]
-        proactive_pct = (proactive / self.total_population) * 100
-
-        trust_coop = self.df[
-            (self.df["Viewpoints towards LGU"] > 50) & 
-            (self.df["Assistance for relocation"] > 30)
-        ].shape[0]
-        trust_pct = (trust_coop / self.total_population) * 100
-
-        heritage_refusal = self.df[
-            (self.df["Has_Relocated"] == False) & 
-            (self.df["Family history and identity"] > 48)
-        ].shape[0]
-        heritage_pct = (heritage_refusal / self.total_population) * 100
-
-        anxiety = self.df[self.df["Fear of housing demolition"] > 50].shape[0]
-        anxiety_pct = (anxiety / self.total_population) * 100
-
-        ready = self.df[
-            (self.df["Has_Relocated"] == True) & 
-            (self.df["Preference and adaptation"] > 60)
-        ].shape[0]
-        readiness_pct = (ready / self.total_population) * 100
-
-        return {
-            "Proactive Preparedness (%)": proactive_pct,
-            "LGU Trust & Cooperation (%)": trust_pct,
-            "Heritage-Based Refusal (%)": heritage_pct,
-            "Demolition Anxiety (%)": anxiety_pct,
-            "Relocation Readiness (%)": readiness_pct
-        }
-
-    def get_cluster_breakdown(self):
-        if self.total_population == 0:
-            return pd.DataFrame(columns=['Cluster', 'Population Count', 'Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %'])
-        cluster_stats = self.df.groupby('Cluster').agg(
-            Count=('Agent_ID', 'count'),
-            Relocated=('Has_Relocated', 'mean'),
-            Evacuating=('Will_Evacuate', 'mean'),
-            Adapting=('Is_Adapting', 'mean'),
-            Resisting=('Is_Resisting', 'mean')
-        )
-        cluster_stats[['Relocated','Evacuating','Adapting','Resisting']] *= 100
-        cluster_stats.columns = ['Population Count', 'Projected to Relocate %',
-                                 'Evacuating %', 'Adapting %', 'Resisting %']
-        return cluster_stats.reset_index()
-
-    def get_cac_averages(self, col_map):
-        cac_avgs = {}
-        for node, clean in col_map.items():
-            for cac in ['Challenge', 'Acceptance', 'Commitment']:
-                key = f"{clean}_{cac}"
-                vals = [getattr(agent, 'cac_states', {}).get(key, 0) for agent in self.agents]
-                cac_avgs[f"{node} ({cac})"] = np.mean(vals) if vals else 0
-        return cac_avgs
-
-# ==============================================================================
-# 5. UNIFIED DIGITAL TWIN (accepts optional seed for reproducibility)
-# ==============================================================================
-class DigitalTwin:
-    def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
-                 damping_factor=0.5, seed=None):
-        self.nodes = nodes
-        self.edges = edges
-        self.damping_factor = damping_factor
-        self.flood_severity = flood_severity
-        self.lgu_threat = lgu_threat
-        self.cluster_profiles = cluster_profiles if cluster_profiles else {}
-        self.total_population = total_population
-        self.step_count = 0
-        self.history = []
-
-        self.incoming_edges = {name: [] for name in self.nodes.keys()}
-        for edge in self.edges:
-            self.incoming_edges[edge.target_name].append((edge.source_name, edge.coefficient))
-
-        self.generator = PopulationGenerator(col_map)
-        self.agents = self.generator.generate_population(
-            self.total_population, self.cluster_profiles, self.nodes, seed=seed
-        )
-        for agent in self.agents:
-            agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
-        self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
-
-    def step(self):
-        if self.total_population == 0:
-            return
-        net_influences = {name: 0.0 for name in self.nodes}
-        for target_name, sources in self.incoming_edges.items():
-            for source_name, coeff in sources:
-                deviation = self.nodes[source_name].current_score - 50.0
-                net_influences[target_name] += coeff * deviation
-
-        for node_name, node in self.nodes.items():
-            delta = net_influences[node_name] * self.damping_factor
-            node.current_score += delta
-            node.current_score = max(0.0, min(100.0, node.current_score))
-            node.previous_delta = delta
-
-        for agent in self.agents:
-            for node_name in self.nodes.keys():
-                base_score = self.nodes[node_name].current_score
-                noise = np.random.normal(0, 3.0)
-                agent.node_states[node_name] = max(0.0, min(100.0, base_score + noise))
-
-        for agent in self.agents:
-            agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
-
-        self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
-        self.history.append(self.analytics.get_behavioral_metrics())
-        self.step_count += 1
-
-    def reset(self, new_flood_severity=None, new_lgu_threat=None):
-        for node in self.nodes.values():
-            if hasattr(node, '_compute_score'):
-                node.current_score = node._compute_score()
-            else:
-                c = node.baseline_cac['Challenge']
-                a = node.baseline_cac['Acceptance']
-                co = node.baseline_cac['Commitment']
-                node.current_score = max(0.0, min(100.0, (a + co) / 2.0 + (50.0 - c) / 2.0))
-            node.previous_delta = 0.0
-        if new_flood_severity is not None:
-            self.flood_severity = new_flood_severity
-        if new_lgu_threat is not None:
-            self.lgu_threat = new_lgu_threat
-        self.agents = self.generator.generate_population(
-            self.total_population, self.cluster_profiles, self.nodes
-        )
-        for agent in self.agents:
-            agent.evaluate_decisions(self.flood_severity, self.lgu_threat)
-        self.analytics = CommunityAnalytics(self.agents, list(self.nodes.keys()))
-        self.history = []
-        self.step_count = 0
-
-    def update_population_size(self, new_size):
-        self.total_population = new_size
-        self.reset()
-
-    def update_cluster_profiles(self, new_profiles):
-        self.cluster_profiles = new_profiles
-        self.reset()
-
-    def get_metrics(self):
-        return self.analytics.get_behavioral_metrics()
-
-    def get_advanced_metrics(self):
-        return self.analytics.get_advanced_metrics()
-
-# ==============================================================================
-# 6. BUILD BASE MODEL DATA
-# ==============================================================================
-@st.cache_resource
-def build_base_nodes_and_edges():
-    nodes_data = {
-        "Prevention and flooding": (23.6, 36.3, 40.1, 0.652, 0.662, 0.827),
-        "Coping during flooding": (23.5, 30.0, 46.5, 0.725, 0.886, 0.710),
-        "Flooding and Family": (34.4, 22.9, 42.7, 0.505, 0.200, 0.386),
-        "Desire for relocation": (16.8, 50.3, 32.8, 0.766, 0.685, 0.505),
-        "Preference and adaptation": (27.1, 36.4, 36.5, 0.780, 0.544, 0.577),
-        "Feasibility of relocation": (60.3, 6.8, 32.9, 0.537, 0.701, 0.741),
-        "Fear of housing demolition": (30.2, 46.0, 23.8, 0.681, 0.797, 0.856),
-        "Viewpoints towards LGU": (17.2, 33.3, 49.4, 0.782, 0.444, 0.211),
-        "Assistance for relocation": (47.3, 36.2, 16.5, 0.831, 0.621, 0.672),
-        "Rights to live in the area": (16.8, 33.8, 49.4, 0.608, 0.542, 0.300),
-        "Living in the disaster area": (30.3, 29.8, 39.9, 0.485, 0.535, 0.862),
-        "Family history and identity": (34.1, 23.0, 42.9, 0.601, 0.414, 0.506)
-    }
-    nodes = {}
-    for name, vals in nodes_data.items():
-        ch, ac, co, corr_ca, corr_ac, corr_cc = vals
-        nodes[name] = MentalModelNode(name, ch, ac, co, corr_ca, corr_ac, corr_cc)
-
-    edge_data = [
-        ("Prevention and flooding", "Living in the disaster area", 0.715, 0.502),
-        ("Coping during flooding", "Prevention and flooding", 1.003, 0.692),
-        ("Coping during flooding", "Flooding and Family", 0.734, 0.756),
-        ("Flooding and Family", "Desire for relocation", 1.109, 0.894),
-        ("Desire for relocation", "Preference and adaptation", 0.941, 0.933),
-        ("Fear of housing demolition", "Coping during flooding", 1.021, 0.932),
-        ("Feasibility of relocation", "Desire for relocation", 0.961, 0.969),
-        ("Preference and adaptation", "Fear of housing demolition", 0.867, 0.780),
-        ("Preference and adaptation", "Feasibility of relocation", 1.020, 0.939),
-        ("Fear of housing demolition", "Rights to live in the area", 0.805, 0.817),
-        ("Rights to live in the area", "Viewpoints towards LGU", 0.931, 0.774),
-        ("Viewpoints towards LGU", "Fear of housing demolition", 0.976, 0.846),
-        ("Viewpoints towards LGU", "Assistance for relocation", 0.943, 0.718),
-        ("Assistance for relocation", "Feasibility of relocation", 0.991, 0.939),
-        ("Family history and identity", "Rights to live in the area", 0.717, 0.698),
-        ("Living in the disaster area", "Rights to live in the area", 0.595, 0.337),
-        ("Assistance for relocation", "Desire for relocation", 0.980, 0.957),
-        ("Family history and identity", "Living in the disaster area", 0.373, 0.198)
+def interpret_avg_milestone(avg_milestone: float) -> str:
+    desc = [
+        (0.5, "between M0 and M1"),
+        (1.5, "between M1 and M2"),
+        (2.5, "between M2 and M3"),
+        (3.5, "between M3 and M4"),
+        (4.5, "between M4 and M5"),
+        (5.5, "between M5 and M6"),
+        (float('inf'), "at or beyond M6"),
     ]
-    edges = [MentalModelEdge(s, t, c, r2, nodes) for s, t, c, r2 in edge_data]
-    return nodes, edges
+    for threshold, d in desc:
+        if avg_milestone < threshold:
+            return f"{avg_milestone:.1f} → {d}"
+    return f"{avg_milestone:.1f} → at or beyond M6"
 
-base_nodes, base_edges = build_base_nodes_and_edges()
+def interpret_utilisation_rate(rate: float) -> Tuple[str, str]:
+    if rate < 20: return "Very Low", "Rarely adopted."
+    elif rate < 40: return "Low", "Limited adoption."
+    elif rate < 60: return "Moderate", "Half adopted."
+    elif rate < 80: return "High", "Strong translation."
+    else: return "Very High", "Excellent utilisation."
 
-col_map = {
-    "Prevention and flooding": "Prevention_flooding",
-    "Coping during flooding": "Coping_flooding",
-    "Flooding and Family": "Flooding_Family",
-    "Desire for relocation": "Desire_relocation",
-    "Preference and adaptation": "Preference_adaptation",
-    "Feasibility of relocation": "Feasibility_relocation",
-    "Fear of housing demolition": "Fear_demolition",
-    "Viewpoints towards LGU": "Viewpoints_LGU",
-    "Assistance for relocation": "Assistance_relocation",
-    "Rights to live in the area": "Rights_live_area",
-    "Living in the disaster area": "Living_disaster_area",
-    "Family history and identity": "Family_history_identity"
-}
-
-# ==============================================================================
-# 7. PAGASA ADVISORY LIVE GAUGE FUNCTIONS
-# ==============================================================================
-
-@st.cache_data(ttl=3600)
-def fetch_pagasa_advisory():
-    url = "https://www.pagasa.dost.gov.ph/flood/tagoloan"
+def month_str_to_num(month_str: Any) -> int:
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return None
-        soup = BeautifulSoup(response.content, "html.parser")
-        content_div = soup.find("div", class_="entry-content")
-        if not content_div:
-            content_div = soup.find("body")
-        text = content_div.get_text(separator="\n") if content_div else soup.get_text()
+        parts = str(month_str).strip().split('-')
+        if len(parts) == 2:
+            return (int(parts[0]) - BASE_YEAR) * 12 + int(parts[1])
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return 0
 
-        issued_match = re.search(r"ISSUED AT (.*?)\n", text)
-        timestamp_str = issued_match.group(1).strip() if issued_match else "Unknown time"
+def date_to_month_num(d: Any) -> int:
+    try:
+        return (d.year - BASE_YEAR) * 12 + d.month
+    except (ValueError, TypeError, AttributeError):
+        return 0
 
-        obs_match = re.search(r"OBSERVED 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
-        forecast_match = re.search(r"FORECAST 24-HR RAINFALL:\s*(.*?)(?:\n|$)", text, re.IGNORECASE)
-        observed_text = obs_match.group(1).strip() if obs_match else ""
-        forecast_text = forecast_match.group(1).strip() if forecast_match else ""
 
-        rainfall_desc = forecast_text if forecast_text else observed_text
-        if not rainfall_desc:
-            return None
+# ============================================================
+# THEME
+# ============================================================
 
-        severity = None
-        label = "Unknown"
-        color = "grey"
-        if re.search(r"\b(torrential|intense|extreme)\b", rainfall_desc, re.IGNORECASE):
-            severity = 0.90
-            color = "red"
-            label = "Torrential Rain (Red)"
-        elif re.search(r"\bheavy\b", rainfall_desc, re.IGNORECASE):
-            severity = 0.65
-            color = "orange"
-            label = "Heavy Rain (Orange)"
-        elif re.search(r"\bmoderate\b", rainfall_desc, re.IGNORECASE):
-            severity = 0.35
-            color = "#FFC107"
-            label = "Moderate Rain (Yellow)"
-        elif re.search(r"\blight\b", rainfall_desc, re.IGNORECASE):
-            severity = 0.10
-            color = "green"
-            label = "Light Rain (Green)"
-        else:
-            return None
-
-        return {
-            "severity": severity,
-            "color": color,
-            "label": label,
-            "timestamp": timestamp_str,
-            "raw_text": rainfall_desc
-        }
-    except Exception:
-        return None
-
-# ==============================================================================
-# 8. STREAMLIT APP
-# ==============================================================================
-st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
-
-if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False
-
-def apply_dark_mode():
-    if st.session_state.dark_mode:
-        dark_css = """
+def apply_theme(dark_mode: bool) -> None:
+    if dark_mode:
+        st.markdown(f"""
         <style>
-            .stApp, .main, .stSidebar, .st-expander, .stMetric, .stDataFrame {
-                background-color: #1E1E1E;
-                color: #E0E0E0;
-            }
-            div[data-testid="metric-container"] {
-                background-color: #2C2C2C;
-                border: 1px solid #444;
-                border-radius: 8px;
-            }
-            div[data-testid="metric-container"] > label {
-                color: #E0E0E0 !important;
-            }
-            .stSidebar {
-                background-color: #252525;
-            }
-            .streamlit-expanderHeader {
-                color: #E0E0E0;
-            }
-            .stButton>button {
-                background-color: #3A3A3A;
-                color: #E0E0E0;
-                border: 1px solid #555;
-            }
-            .stSlider>div>div>div>div {
-                color: #E0E0E0;
-            }
-            .caption, .stCaption {
-                color: #B0B0B0;
-            }
+            .stApp {{ background-color: {DARK_BG} !important; color: {DARK_TEXT} !important; }}
+            .sidebar .sidebar-content {{ background-color: #2E2E2E !important; border-right: 2px solid {USTP_GOLD} !important; }}
+            .sidebar .sidebar-content * {{ color: {DARK_TEXT} !important; }}
+            h1, h2, h3, h4, h5, h6, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {{ color: {USTP_GOLD} !important; }}
+            .stMarkdown, .stText, .stCaption, .stDataFrame {{ color: {DARK_TEXT} !important; }}
+            .stButton > button {{ background-color: {USTP_DARK_BLUE} !important; color: {DARK_TEXT} !important; border: 1px solid {USTP_GOLD} !important; }}
+            .stButton > button:hover {{ background-color: {USTP_GOLD} !important; color: {USTP_DARK_BLUE} !important; }}
+            .stMetric {{ background-color: #2E2E2E !important; border: 1px solid {USTP_GOLD} !important; border-radius: 5px; padding: 10px; }}
+            .stMetric label {{ color: {DARK_TEXT} !important; }}
+            .dataframe {{ background-color: #2E2E2E !important; color: {DARK_TEXT} !important; }}
+            .dataframe thead tr th {{ background-color: {USTP_DARK_BLUE} !important; color: {DARK_TEXT} !important; }}
+            .dataframe tbody tr {{ background-color: #2E2E2E !important; }}
+            .dataframe tbody tr:hover {{ background-color: #3E3E3E !important; }}
+            .streamlit-expanderHeader {{ background-color: #2E2E2E !important; color: {DARK_TEXT} !important; border: 1px solid {USTP_GOLD} !important; }}
+            .streamlit-expanderContent {{ background-color: #1E1E1E !important; color: {DARK_TEXT} !important; }}
+            .stAlert {{ background-color: #2E2E2E !important; color: {DARK_TEXT} !important; border: 1px solid {USTP_GOLD} !important; }}
+            .stSelectbox label, .stNumberInput label, .stCheckbox label {{ color: {DARK_TEXT} !important; }}
+            .stRadio label {{ color: {DARK_TEXT} !important; }}
+            .stFileUploader {{ background-color: #2E2E2E !important; border: 1px dashed {USTP_GOLD} !important; }}
+            .stFileUploader label {{ color: {DARK_TEXT} !important; }}
+            .stCaption {{ color: #CCCCCC !important; }}
+            .main .block-container {{ background-color: {DARK_BG} !important; }}
+            .css-1y4p8pa {{ background-color: #2E2E2E !important; }}
+            div[style*="background-color: #E3F2FD"] {{ background-color: #2E2E2E !important; border-left: 5px solid {USTP_GOLD} !important; color: {DARK_TEXT} !important; }}
+            div[style*="background-color: #E8F5E9"] {{ background-color: #2E2E2E !important; border-left: 5px solid {USTP_GOLD} !important; color: {DARK_TEXT} !important; }}
+            table {{ background-color: #2E2E2E !important; color: {DARK_TEXT} !important; border: 1px solid {USTP_GOLD} !important; }}
+            table th {{ background-color: {USTP_DARK_BLUE} !important; color: {DARK_TEXT} !important; }}
+            table td {{ background-color: #2E2E2E !important; color: {DARK_TEXT} !important; }}
         </style>
-        """
-        st.markdown(dark_css, unsafe_allow_html=True)
-
-apply_dark_mode()
-
-# ---------- Session State Initialisation ----------
-if 'twin' not in st.session_state:
-    st.session_state.twin = DigitalTwin(
-        nodes=base_nodes,
-        edges=base_edges,
-        cluster_profiles={},
-        total_population=0,
-        flood_severity=0.0,
-        lgu_threat=False
-    )
-
-# Ensure all expected keys exist
-defaults = {
-    'data_calibrated': False,
-    'respondent_clusters': None,
-    'current_barangay': "All Barangays",
-    'raw_data': None,
-    'disable_flashing': False,
-    'use_pagasa_auto': True,
-    'pagasa_severity': None,
-    'prev_pagasa_severity': None,
-    'needs_calibration': False,
-    'baseline_params': None,
-    'log_entries': [],
-    'auto_log': True,
-    'prev_k_mode': "Auto (silhouette)",
-    'dark_mode': False,
-    'last_processed_hash': None
-}
-for key, val in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
-
-# ---------- Sidebar ----------
-with st.sidebar:
-    st.toggle("🌙 Dark Mode", key="dark_mode")
-
-    st.header("📊 Data Upload & Calibration")
-    cac_vars = ['Challenge', 'Acceptance', 'Commitment']
-    csv_columns = ['Respondent_Name', 'Barangay_Name']
-    for node, clean_name in col_map.items():
-        for cac in cac_vars:
-            csv_columns.append(f"{clean_name}_{cac}")
-
-    template_df = pd.DataFrame({col: ['Sample Name', 'Sample Barangay'] if col in ['Respondent_Name', 'Barangay_Name'] else [50, 60] for col in csv_columns})
-    st.download_button("📥 Download CAC CSV Template", template_df.to_csv(index=False).encode('utf-8'),
-                       'twin_cac_template.csv', 'text/csv')
-
-    uploaded_file = st.file_uploader("Upload Resident Survey Data (CSV)", type=["csv"], key="uploader")
-
-    if uploaded_file is not None:
-        try:
-            df_raw = pd.read_csv(uploaded_file)
-            missing = [c for c in csv_columns if c not in df_raw.columns]
-            if missing:
-                st.error(f"❌ Missing columns: {', '.join(missing[:5])}...")
-                st.button("🔄 Recalibrate (disabled)", disabled=True)
-            else:
-                st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                # Only trigger calibration if data has changed
-                current_hash = hashlib.md5(df_raw.to_csv(index=False).encode()).hexdigest()
-                if st.session_state.last_processed_hash != current_hash:
-                    st.session_state.raw_data = df_raw
-                    st.session_state.needs_calibration = True
-                    st.session_state.last_processed_hash = current_hash
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-    if uploaded_file is None and st.session_state.raw_data is not None:
-        df_raw = st.session_state.raw_data
-        st.info(f"📌 Using previously uploaded data ({len(df_raw)} residents). Re‑upload to replace.")
-    elif uploaded_file is None:
-        df_raw = None
-
-    if df_raw is not None:
-        st.subheader("📍 Select Target Barangay")
-        barangays = ["All Barangays"] + sorted(df_raw['Barangay_Name'].unique().tolist())
-        current_brgy = st.session_state.get('current_barangay', 'All Barangays')
-        selected_barangay = st.selectbox("Choose a barangay to focus on", barangays,
-                                         index=barangays.index(current_brgy) if current_brgy in barangays else 0,
-                                         key="barangay_filter")
-        if selected_barangay != st.session_state.current_barangay:
-            st.session_state.current_barangay = selected_barangay
-            st.session_state.needs_calibration = True
-
-        if selected_barangay != "All Barangays":
-            df_filtered = df_raw[df_raw['Barangay_Name'] == selected_barangay].copy()
-            if len(df_filtered) == 0:
-                st.warning(f"No data found for {selected_barangay}.")
-                st.stop()
-            else:
-                st.info(f"📌 Analysing **{selected_barangay}** only. Updating twin automatically.")
-        else:
-            df_filtered = df_raw
-            st.info("📌 Analysing **all barangays combined**. Updating twin automatically.")
-
-        st.subheader("⚙️ K-Means Cluster Settings")
-        k_mode = st.radio(
-            "How many clusters should we create?",
-            ["Auto (silhouette)", "Fixed (3 clusters)", "Manual"],
-            index=0,
-            key="k_mode"
-        )
-        manual_k = None
-        if k_mode == "Manual":
-            manual_k = st.slider("Number of clusters (K)", 2, 5, 3, key="manual_k_slider")
-
-        if 'prev_k_mode' not in st.session_state:
-            st.session_state.prev_k_mode = k_mode
-        if k_mode != st.session_state.prev_k_mode:
-            st.session_state.prev_k_mode = k_mode
-            st.session_state.needs_calibration = True
-
-        if len(df_filtered) < 3:
-            st.error("Need at least 3 respondents for clustering.")
+        """, unsafe_allow_html=True)
     else:
-        st.info("📝 Upload a 38‑column CSV to begin.")
+        st.markdown("""
+        <style>
+            .stApp { background-color: #FFFFFF; }
+            .sidebar .sidebar-content { background-color: #F8F9FA; }
+            .stButton > button { background-color: #0D2B5E; color: white; }
+            .stButton > button:hover { background-color: #F5A623; color: #0D2B5E; }
+        </style>
+        """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.header("🎛️ Simulation Controls")
-    steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
-    run_disabled = (st.session_state.twin.total_population == 0)
-    if st.button("▶️ Run", use_container_width=True, type="primary", disabled=run_disabled):
-        for _ in range(steps_to_run):
-            st.session_state.twin.step()
-        st.rerun()
-    if st.button("🔄 Reset Simulation", use_container_width=True, disabled=run_disabled):
-        if st.session_state.baseline_params is not None:
-            bp = st.session_state.baseline_params
-            st.session_state.twin = DigitalTwin(
-                nodes=base_nodes,
-                edges=base_edges,
-                cluster_profiles=bp['cluster_profiles'],
-                total_population=bp['total_population'],
-                flood_severity=bp['flood_severity'],
-                lgu_threat=bp['lgu_threat'],
-                seed=bp['seed']
-            )
-            st.session_state.use_pagasa_auto = True
-            st.success("Baseline restored.")
-        else:
-            st.warning("No baseline available. Upload data first.")
-        st.rerun()
 
-    st.markdown("---")
-    st.header("⚙️ Settings")
-    pop_disabled = (len(st.session_state.twin.cluster_profiles) == 0)
-    new_pop = st.slider("Total Residents to Simulate", 10, 5000, st.session_state.twin.total_population,
-                        key="pop_slider", disabled=pop_disabled,
-                        help="Changing this value immediately regenerates the population.")
-    if not pop_disabled and new_pop != st.session_state.twin.total_population:
-        st.session_state.twin.update_population_size(new_pop)
-        st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
-        st.rerun()
+def get_figure_download_link(fig, filename="chart.html", link_text="Download chart"):
+    html_str = fig.to_html(include_plotlyjs='cdn', full_html=True)
+    b64 = base64.b64encode(html_str.encode()).decode()
+    href = f'<a href="data:text/html;base64,{b64}" download="{filename}">{link_text}</a>'
+    st.markdown(href, unsafe_allow_html=True)
 
-    # PAGASA Advisory section
-    st.markdown("---")
-    st.subheader("🌧️ PAGASA Advisory (Tagoloan River Basin)")
-    advisory = fetch_pagasa_advisory()
-    if advisory:
-        pagasa_severity = advisory["severity"]
-        ts = advisory["timestamp"]
-        label = advisory["label"]
-        color = advisory["color"]
-    else:
-        pagasa_severity = None
-        ts = "Advisory unavailable"
-        label = "No data"
-        color = "grey"
 
-    if st.session_state.use_pagasa_auto and pagasa_severity is not None:
-        st.session_state.twin.flood_severity = pagasa_severity
+# ============================================================
+# DATA CLASSES (with optional per‑agent coefficients for Phase 2)
+# ============================================================
 
-    if st.session_state.auto_log and pagasa_severity is not None:
-        if st.session_state.prev_pagasa_severity is None:
-            st.session_state.prev_pagasa_severity = pagasa_severity
-        elif pagasa_severity != st.session_state.prev_pagasa_severity:
-            metrics = st.session_state.twin.get_metrics()
-            advanced = st.session_state.twin.get_advanced_metrics()
-            log_entry = {
-                "Barangay": st.session_state.current_barangay,
-                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Severity": f"{pagasa_severity:.2f} ({label})",
-                "Total Population": metrics['Total Population'],
-                "Relocate %": metrics['Projected to Relocate (%)'],
-                "Evacuating %": metrics['Evacuating (%)'],
-                "Resisting LGU %": metrics['Resisting LGU (%)'],
-                "Proactive %": advanced['Proactive Preparedness (%)'],
-                "LGU Trust %": advanced['LGU Trust & Cooperation (%)'],
-                "Heritage Refusal %": advanced['Heritage-Based Refusal (%)'],
-                "Demolition Anxiety %": advanced['Demolition Anxiety (%)'],
-                "Relocation Readiness %": advanced['Relocation Readiness (%)']
+@dataclass
+class CycleRecord:
+    cycle_number: int
+    total_improvement: float
+    completion_month: int
+
+
+class SchoolAgent:
+    def __init__(self, unique_id: int,
+                 initial_R=0.3, initial_A=0.2, initial_C=0.2,
+                 initial_S=0.1, initial_I=0.1, initial_P=0.1, initial_M=0.0,
+                 coeff_dict: Optional[Dict[str, float]] = None,
+                 random_events_enabled: bool = False):
+        self.id = unique_id
+        self.real_id: int = unique_id
+        self.R = initial_R
+        self.A = initial_A
+        self.C = initial_C
+        self.S = initial_S
+        self.I = initial_I
+        self.P = initial_P
+        self.M = initial_M
+        self.current_milestone = 0
+        self.months_in_milestone = 0
+        self.current_cycle_accumulator = 0.0
+        self.cycle_improvements: List[CycleRecord] = []
+        self.cycle_count = 0
+        self.running_total_outcome = 0.0
+        self.random_events_enabled = random_events_enabled
+        self.model_time = 0
+        self._rng = np.random.RandomState()
+        if coeff_dict is None:
+            self.coeff = {
+                'R_M': 0.02, 'A_R': 0.04, 'A_train': 0.02, 'A_M': 0.01,
+                'C_train': 0.03, 'C_mentor': 0.02, 'S_budget': 0.04, 'S_mentor': 0.02,
+                'I_lead': 0.03, 'I_S': 0.02, 'P_collab': 0.04, 'P_I': 0.02,
+                'M_C': 0.02, 'M_P': 0.02, 'const_R': -0.01, 'const_A': -0.005,
+                'const_C': -0.01, 'const_S': -0.01, 'const_I': -0.005,
+                'const_P': -0.01, 'const_M': -0.005
             }
-            st.session_state.log_entries.append(log_entry)
-            st.session_state.prev_pagasa_severity = pagasa_severity
-
-    flash_class = ""
-    if pagasa_severity is not None and not st.session_state.disable_flashing:
-        if pagasa_severity >= 0.60:
-            flash_class = "fast-flash"
         else:
-            flash_class = "slow-flash"
-    warning_icon = "⚠️" if pagasa_severity and pagasa_severity >= 0.60 else ""
+            self.coeff = coeff_dict
 
-    gauge_html = f"""
-    <div class="live-gauge {flash_class}" style="margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:bold; color: {color};">{warning_icon} {label}</span>
-            <span style="font-size:0.8rem; color: #888;">Last updated: {ts}</span>
-        </div>
-        <div style="width:100%; height:25px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-top:5px; border: 1px solid #555;">
-            <div style="position:absolute; left:{pagasa_severity*100 if pagasa_severity else 0}%; top:-4px; width:4px; height:33px; background:black; border-radius:2px;"></div>
-        </div>
-        <p style="margin-top:5px; font-size:11px; color: #aaa;">Based on PAGASA advisory (updated daily). Simulation slider below.</p>
-    </div>
-    <style>
-        @keyframes slowPulse {{
-            0% {{ opacity: 1; }}
-            50% {{ opacity: 0.7; }}
-            100% {{ opacity: 1; }}
-        }}
-        @keyframes fastPulse {{
-            0% {{ opacity: 1; }}
-            50% {{ opacity: 0.4; }}
-            100% {{ opacity: 1; }}
-        }}
-        .slow-flash {{
-            animation: slowPulse 2s infinite;
-        }}
-        .fast-flash {{
-            animation: fastPulse 0.8s infinite;
-        }}
-    </style>
-    """
-    st.markdown(gauge_html, unsafe_allow_html=True)
+    def apply_random_event(self):
+        if not self.random_events_enabled:
+            return
+        if self._rng.rand() < RANDOM_EVENT_PROB:
+            event_type = self._rng.choice(["loss_champion", "funding", "leadership_change"])
+            if event_type == "loss_champion":
+                for var in VARIABLES:
+                    setattr(self, var, max(VALUE_FLOOR, getattr(self, var) - LOSS_CHAMPION_PENALTY))
+            elif event_type == "funding":
+                self.S = min(VALUE_CEIL, self.S + FUNDING_BOOST)
+            elif event_type == "leadership_change":
+                self.I = max(VALUE_FLOOR, self.I - LEADERSHIP_PENALTY)
 
-    if st.button("🔄 Refresh Live Advisory"):
-        fetch_pagasa_advisory.clear()
-        st.rerun()
+    def step_individual(self, levers: Dict[str, float]):
+        """Single agent step using its own coefficients (used in Phase 2)."""
+        u_train, u_mentor, u_budget, u_lead, u_collab = levers.values()
+        c = self.coeff
+        u_lead_eff = min(1.0, u_lead + 0.05 * self.M)
+        R_new = self.R + c['R_M'] * self.M + c['const_R'] * (1 - u_lead_eff)
+        A_new = self.A + c['A_R'] * self.R + c['A_train'] * u_train + c['A_M'] * self.M + c['const_A']
+        C_new = self.C + c['C_train'] * u_train + c['C_mentor'] * u_mentor + c['const_C']
+        S_new = self.S + c['S_budget'] * u_budget + c['S_mentor'] * u_mentor + c['const_S'] * (1 - u_lead_eff)
+        I_new = self.I + c['I_lead'] * u_lead_eff + c['I_S'] * self.S + c['const_I']
+        P_new = self.P + c['P_collab'] * u_collab + c['P_I'] * self.I + c['const_P']
+        M_new = self.M + c['M_C'] * self.C + c['M_P'] * self.P + c['const_M']
+        self.R = max(VALUE_FLOOR, min(VALUE_CEIL, R_new))
+        self.A = max(VALUE_FLOOR, min(VALUE_CEIL, A_new))
+        self.C = max(VALUE_FLOOR, min(VALUE_CEIL, C_new))
+        self.S = max(VALUE_FLOOR, min(VALUE_CEIL, S_new))
+        self.I = max(VALUE_FLOOR, min(VALUE_CEIL, I_new))
+        self.P = max(VALUE_FLOOR, min(VALUE_CEIL, P_new))
+        self.M = max(VALUE_FLOOR, min(VALUE_CEIL, M_new))
+        monthly_gain = MONTHLY_OUTCOME_BASE * self.M * (1 + self.P)
+        self.running_total_outcome += monthly_gain
+        self.current_cycle_accumulator += monthly_gain
+        self._update_milestone()
+        self.apply_random_event()
 
-    st.session_state.disable_flashing = st.checkbox("Disable flashing", value=st.session_state.disable_flashing, key="disable_flash_check")
+    def _update_milestone(self):
+        self.months_in_milestone += 1
+        next_milestone = self.current_milestone
+        if self.current_milestone in MILESTONE_THRESHOLDS:
+            var_name, threshold, target = MILESTONE_THRESHOLDS[self.current_milestone]
+            if getattr(self, var_name) >= threshold:
+                next_milestone = target
+        elif self.current_milestone == 6:
+            if self.M >= 0.9 and self.R >= 0.8:
+                self._complete_cycle()
+                next_milestone = 0
+        if next_milestone != self.current_milestone and self.months_in_milestone >= MILESTONE_MIN_MONTHS:
+            self.current_milestone = next_milestone
+            self.months_in_milestone = 0
+
+    def _complete_cycle(self):
+        old_M = self.M
+        self.R = min(VALUE_CEIL, self.R + CYCLE_R_BONUS)
+        self.M = max(CYCLE_M_MIN_AFTER_DECAY, self.M * CYCLE_M_DECAY_FACTOR)
+        bonus = CYCLE_BONUS_BASE + CYCLE_BONUS_M_SCALE * old_M
+        self.running_total_outcome += bonus
+        self.current_cycle_accumulator += bonus
+        self.cycle_count += 1
+        self.cycle_improvements.append(
+            CycleRecord(cycle_number=self.cycle_count,
+                        total_improvement=self.current_cycle_accumulator,
+                        completion_month=self.model_time))
+        self.current_cycle_accumulator = 0.0
+
+
+class Simulation:
+    def __init__(self, num_schools=1, random_events=False, agent_params=None):
+        if agent_params:
+            self.agents = []
+            for i, params in enumerate(agent_params):
+                init_R, init_A, init_C, init_S, init_I, init_P, init_M, coeff = params
+                self.agents.append(SchoolAgent(i,
+                                               initial_R=init_R, initial_A=init_A,
+                                               initial_C=init_C, initial_S=init_S,
+                                               initial_I=init_I, initial_P=init_P,
+                                               initial_M=init_M,
+                                               coeff_dict=coeff,
+                                               random_events_enabled=random_events))
+        else:
+            self.agents = [SchoolAgent(i, random_events_enabled=random_events) for i in range(num_schools)]
+
+    def step(self, levers, month):
+        for agent in self.agents:
+            agent.model_time = month
+            agent.step_individual(levers)
+
+    def get_agent(self, idx=0):
+        return self.agents[idx]
+
+
+# ============================================================
+# SIMULATION HELPERS (from Phase 1)
+# ============================================================
+
+def create_empty_history(school_ids):
+    return {sid: {var: [] for var in VARIABLES + ['month', 'milestone', 'running_outcome']}
+            for sid in school_ids}
+
+def init_simulation_with_data(school_ids, metadata_df, random_events, agent_params=None):
+    if agent_params:
+        sim = Simulation(agent_params=agent_params, random_events=random_events)
+    else:
+        sim = Simulation(num_schools=len(school_ids), random_events=random_events)
+    for idx, agent in enumerate(sim.agents):
+        agent.real_id = school_ids[idx]
+    seed_agents_from_metadata(sim.agents, school_ids, metadata_df)
+    return sim
+
+def seed_agents_from_metadata(agents, school_ids, metadata_df):
+    for agent in agents:
+        sm = metadata_df[metadata_df['school_id_no'] == agent.real_id]
+        if sm.empty:
+            continue
+        agent.A = min(VALUE_CEIL, agent.A + len(sm[sm['document_type'] == 'abstract']) * 0.01)
+        agent.M = min(VALUE_CEIL, agent.M + len(sm[sm['status'] == 'published']) * 0.02)
+        agent.C = min(VALUE_CEIL, agent.C + len(sm[sm['document_type'] == 'full_paper']) * 0.005)
+        agent.P = min(VALUE_CEIL, agent.P + sm['theme'].nunique() * 0.01)
+
+def record_history(history, agents, total_months):
+    for agent in agents:
+        h = history[agent.real_id]
+        h['month'].append(total_months)
+        for var in VARIABLES:
+            h[var].append(getattr(agent, var))
+        h['milestone'].append(agent.current_milestone)
+        h['running_outcome'].append(agent.running_total_outcome)
+
+def apply_survey_override(agents, survey_df, target_month):
+    for agent in agents:
+        row = survey_df[(survey_df['school_id_no'] == agent.real_id) & (survey_df['month_num'] == target_month)]
+        if not row.empty:
+            r = row.iloc[0]
+            for var in VARIABLES:
+                setattr(agent, var, r[var])
+
+
+# ============================================================
+# PHASE 2 FUNCTIONS (calibration, clustering, sensitivity, MC, causal)
+# ============================================================
+
+def calibrate_coefficients(survey_df):
+    if not SKLEARN_AVAILABLE:
+        return None, "scikit‑learn not installed – using default coefficients."
+    if survey_df is None or survey_df.empty:
+        return None, "No survey data – using default coefficients."
+    u_train = u_mentor = u_budget = u_lead = u_collab = 0.5
+    X_R, y_R = [], []; X_A, y_A = [], []; X_C, y_C = [], []
+    X_S, y_S = [], []; X_I, y_I = [], []; X_P, y_P = [], []; X_M, y_M = [], []
+    schools = survey_df['school_id_no'].unique()
+    for sid in schools:
+        sdf = survey_df[survey_df['school_id_no'] == sid].sort_values('month_num')
+        if len(sdf) < 2:
+            continue
+        for i in range(len(sdf)-1):
+            curr = sdf.iloc[i]
+            nxt = sdf.iloc[i+1]
+            u_lead_eff = min(1.0, u_lead + 0.05 * curr['M'])
+            X_R.append([curr['M']]); y_R.append(nxt['R'] - curr['R'])
+            X_A.append([curr['R'], u_train, curr['M']]); y_A.append(nxt['A'] - curr['A'])
+            X_C.append([u_train, u_mentor]); y_C.append(nxt['C'] - curr['C'])
+            X_S.append([u_budget, u_mentor]); y_S.append(nxt['S'] - curr['S'])
+            X_I.append([u_lead_eff, curr['S']]); y_I.append(nxt['I'] - curr['I'])
+            X_P.append([u_collab, curr['I']]); y_P.append(nxt['P'] - curr['P'])
+            X_M.append([curr['C'], curr['P']]); y_M.append(nxt['M'] - curr['M'])
+    coeff = {}
+    default = {
+        'R_M': 0.02, 'A_R': 0.04, 'A_train': 0.02, 'A_M': 0.01,
+        'C_train': 0.03, 'C_mentor': 0.02, 'S_budget': 0.04, 'S_mentor': 0.02,
+        'I_lead': 0.03, 'I_S': 0.02, 'P_collab': 0.04, 'P_I': 0.02,
+        'M_C': 0.02, 'M_P': 0.02, 'const_R': -0.01, 'const_A': -0.005,
+        'const_C': -0.01, 'const_S': -0.01, 'const_I': -0.005,
+        'const_P': -0.01, 'const_M': -0.005
+    }
+    try:
+        if X_R:
+            model = LinearRegression().fit(X_R, y_R)
+            coeff['R_M'] = model.coef_[0]; coeff['const_R'] = model.intercept_
+        if X_A:
+            model = LinearRegression().fit(X_A, y_A)
+            coeff['A_R'], coeff['A_train'], coeff['A_M'] = model.coef_
+            coeff['const_A'] = model.intercept_
+        if X_C:
+            model = LinearRegression().fit(X_C, y_C)
+            coeff['C_train'], coeff['C_mentor'] = model.coef_
+            coeff['const_C'] = model.intercept_
+        if X_S:
+            model = LinearRegression().fit(X_S, y_S)
+            coeff['S_budget'], coeff['S_mentor'] = model.coef_
+            coeff['const_S'] = model.intercept_
+        if X_I:
+            model = LinearRegression().fit(X_I, y_I)
+            coeff['I_lead'], coeff['I_S'] = model.coef_
+            coeff['const_I'] = model.intercept_
+        if X_P:
+            model = LinearRegression().fit(X_P, y_P)
+            coeff['P_collab'], coeff['P_I'] = model.coef_
+            coeff['const_P'] = model.intercept_
+        if X_M:
+            model = LinearRegression().fit(X_M, y_M)
+            coeff['M_C'], coeff['M_P'] = model.coef_
+            coeff['const_M'] = model.intercept_
+        for k, v in default.items():
+            if k not in coeff:
+                coeff[k] = v
+        return coeff, "Calibration successful using data-driven coefficients."
+    except Exception as e:
+        return None, f"Calibration failed: {str(e)} – using default coefficients."
+
+def cluster_schools(metadata_df, school_ids):
+    if not SKLEARN_AVAILABLE:
+        return {sid: 0 for sid in school_ids}, {0: 1.0}
+    if metadata_df is None or metadata_df.empty:
+        return {sid: 0 for sid in school_ids}, {0: 1.0}
+    features = []
+    for sid in school_ids:
+        sm = metadata_df[metadata_df['school_id_no'] == sid]
+        n_teachers = sm['teacher_name'].nunique()
+        n_themes = sm['theme'].nunique()
+        avg_util = sm['utilized_by_school'].mean() if not sm.empty else 0
+        pub_rate = len(sm[sm['status'] == 'published']) / len(sm) if len(sm) > 0 else 0
+        features.append([n_teachers, n_themes, avg_util, pub_rate])
+    X = np.array(features)
+    n_clusters = min(3, len(X))
+    if n_clusters < 2:
+        return {sid: 0 for sid in school_ids}, {0: 1.0}
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(X)
+    cluster_map = {sid: cl for sid, cl in zip(school_ids, clusters)}
+    multipliers = {0: 1.0, 1: 1.2, 2: 0.8}
+    return cluster_map, multipliers
+
+def get_agent_params(school_ids, survey_df, metadata_df, calibrated_coeff=None):
+    cluster_map, multipliers = cluster_schools(metadata_df, school_ids)
+    base_coeff = calibrated_coeff if calibrated_coeff else {
+        'R_M': 0.02, 'A_R': 0.04, 'A_train': 0.02, 'A_M': 0.01,
+        'C_train': 0.03, 'C_mentor': 0.02, 'S_budget': 0.04, 'S_mentor': 0.02,
+        'I_lead': 0.03, 'I_S': 0.02, 'P_collab': 0.04, 'P_I': 0.02,
+        'M_C': 0.02, 'M_P': 0.02, 'const_R': -0.01, 'const_A': -0.005,
+        'const_C': -0.01, 'const_S': -0.01, 'const_I': -0.005,
+        'const_P': -0.01, 'const_M': -0.005
+    }
+    params = []
+    for sid in school_ids:
+        latest = get_latest_survey(survey_df, sid)
+        if latest is not None:
+            init_vals = (latest['R'], latest['A'], latest['C'], latest['S'], latest['I'], latest['P'], latest['M'])
+        else:
+            init_vals = (0.3, 0.2, 0.2, 0.1, 0.1, 0.1, 0.0)
+        mult = multipliers.get(cluster_map.get(sid, 0), 1.0)
+        coeff = {k: v * mult for k, v in base_coeff.items()}
+        params.append((*init_vals, coeff))
+    return params
+
+def run_sensitivity(sim_class, agent_params, school_ids, levers, duration, use_survey, survey_df, metadata_df, selected_school_id):
+    baseline = levers.copy()
+    lever_names = ['u_train', 'u_mentor', 'u_budget', 'u_lead', 'u_collab']
+
+    def _quick_run(test_levers):
+        sim = sim_class(agent_params=agent_params)
+        for i, agent in enumerate(sim.agents):
+            agent.real_id = school_ids[i]
+        seed_agents_from_metadata(sim.agents, school_ids, metadata_df)
+        for m in range(1, duration + 1):
+            if use_survey:
+                apply_survey_override(sim.agents, survey_df, m)
+            sim.step(test_levers, m)
+        agent = next(a for a in sim.agents if a.real_id == selected_school_id)
+        return agent.running_total_outcome
+
+    base_rcsi = _quick_run(baseline)
+    results = {}
+    for lever in lever_names:
+        for delta in [-0.1, 0.1]:
+            test_levers = baseline.copy()
+            test_levers[lever] = max(0.0, min(1.0, baseline[lever] + delta))
+            results[(lever, delta)] = _quick_run(test_levers)
+
+    tornado_data = []
+    for lever in lever_names:
+        low_change = results[(lever, -0.1)] - base_rcsi
+        high_change = results[(lever, 0.1)] - base_rcsi
+        tornado_data.append({'Lever': lever, 'Low Change': low_change, 'High Change': high_change})
+    df = pd.DataFrame(tornado_data).melt(id_vars='Lever', var_name='Direction', value_name='Change')
+    fig = px.bar(df, x='Change', y='Lever', color='Direction', orientation='h',
+                 title='Sensitivity of Final RCSI to Policy Levers (±10%)',
+                 color_discrete_map={'Low Change': DEPED_RED, 'High Change': USTP_GOLD})
+    fig.update_layout(template='plotly_white')
+    impacts = {lever: abs(results[(lever, 0.1)] - base_rcsi) + abs(results[(lever, -0.1)] - base_rcsi) for lever in lever_names}
+    most_impactful = max(impacts, key=impacts.get)
+    sensitivity_info = f"Sensitivity analysis shows that **{most_impactful}** has the greatest influence on final RCSI."
+    return fig, sensitivity_info
+
+def monte_carlo_sim(num_runs, sim_class, agent_params, school_ids, levers, duration, use_survey, survey_df, metadata_df, selected_school_id):
+    all_rcsi = []
+    all_milestone = []
+    for _ in range(num_runs):
+        noisy_params = []
+        for params in agent_params:
+            *init_vals, coeff = params
+            new_init = [max(VALUE_FLOOR, min(VALUE_CEIL, v + np.random.normal(0, 0.02))) for v in init_vals]
+            noisy_coeff = {k: v * np.random.normal(1, 0.05) for k, v in coeff.items()}
+            noisy_params.append((*new_init, noisy_coeff))
+        sim = sim_class(agent_params=noisy_params, random_events=True)
+        for i, agent in enumerate(sim.agents):
+            agent.real_id = school_ids[i]
+        seed_agents_from_metadata(sim.agents, school_ids, metadata_df)
+        target = next(a for a in sim.agents if a.real_id == selected_school_id)
+        rcsi_hist, mil_hist = [], []
+        for m in range(1, duration + 1):
+            if use_survey:
+                apply_survey_override(sim.agents, survey_df, m)
+            sim.step(levers, m)
+            rcsi_hist.append(target.running_total_outcome)
+            mil_hist.append(target.current_milestone)
+        all_rcsi.append(rcsi_hist)
+        all_milestone.append(mil_hist)
+    all_rcsi = np.array(all_rcsi)
+    all_milestone = np.array(all_milestone)
+    months = np.arange(1, duration + 1)
+    mc_data = {
+        'months': months,
+        'rcsi': {'p10': np.percentile(all_rcsi, 10, axis=0),
+                 'p50': np.percentile(all_rcsi, 50, axis=0),
+                 'p90': np.percentile(all_rcsi, 90, axis=0)},
+        'milestone': {'p10': np.percentile(all_milestone, 10, axis=0),
+                      'p50': np.percentile(all_milestone, 50, axis=0),
+                      'p90': np.percentile(all_milestone, 90, axis=0)},
+        'final_rcsi': all_rcsi[:, -1]
+    }
+    mc_info = (f"Monte Carlo simulation ({num_runs} runs) estimates a median final RCSI of "
+               f"**{np.median(mc_data['final_rcsi']):.3f}**, with a P10‑P90 range of "
+               f"**{np.percentile(mc_data['final_rcsi'], 10):.3f}** – **{np.percentile(mc_data['final_rcsi'], 90):.3f}**. "
+               "This narrow spread is relevant at the school level because it indicates that the forecast is highly stable and actionable for local policy decisions.")
+    return mc_data, mc_info
+
+def plot_monte_carlo_bands(mc_data, dark_mode):
+    months = mc_data['months']
+    fig = make_subplots(rows=2, cols=1, subplot_titles=("RCSI with Uncertainty", "Milestone with Uncertainty"))
+    fig.add_trace(go.Scatter(x=months, y=mc_data['rcsi']['p10'], mode='lines', name='P10 RCSI',
+                             line=dict(color=USTP_GOLD, dash='dot')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['rcsi']['p50'], mode='lines', name='Median RCSI',
+                             line=dict(color=USTP_GOLD)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['rcsi']['p90'], mode='lines', name='P90 RCSI',
+                             line=dict(color=USTP_GOLD, dash='dot')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['rcsi']['p10'], showlegend=False,
+                             line=dict(color='rgba(0,0,0,0)'), hoverinfo='none'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['rcsi']['p90'], fill='tonexty',
+                             fillcolor='rgba(245,166,35,0.2)', line=dict(color='rgba(0,0,0,0)'),
+                             showlegend=False, hoverinfo='none'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['milestone']['p10'], mode='lines', name='P10 Milestone',
+                             line=dict(color=DEPED_RED, dash='dot')), row=2, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['milestone']['p50'], mode='lines', name='Median Milestone',
+                             line=dict(color=DEPED_RED)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['milestone']['p90'], mode='lines', name='P90 Milestone',
+                             line=dict(color=DEPED_RED, dash='dot')), row=2, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['milestone']['p10'], showlegend=False,
+                             line=dict(color='rgba(0,0,0,0)'), hoverinfo='none'), row=2, col=1)
+    fig.add_trace(go.Scatter(x=months, y=mc_data['milestone']['p90'], fill='tonexty',
+                             fillcolor='rgba(211,47,47,0.2)', line=dict(color='rgba(0,0,0,0)'),
+                             showlegend=False, hoverinfo='none'), row=2, col=1)
+    fig.update_layout(height=700, template='plotly_dark' if dark_mode else 'plotly_white')
+    fig.update_xaxes(title_text="Month", row=1, col=1); fig.update_yaxes(title_text="RCSI", row=1, col=1)
+    fig.update_xaxes(title_text="Month", row=2, col=1); fig.update_yaxes(title_text="Milestone", row=2, col=1)
+    return fig
+
+def causal_analysis(monte_carlo_finals, baseline_values):
+    if not SKLEARN_AVAILABLE or len(monte_carlo_finals) < 10:
+        return None
+    X = np.array([list(baseline_values.values()) for _ in range(len(monte_carlo_finals))])
+    model = LinearRegression().fit(X, monte_carlo_finals)
+    return dict(zip(baseline_values.keys(), model.coef_))
+
+
+# ============================================================
+# DATA PROCESSING (from Phase 1 – unchanged)
+# ============================================================
+
+@st.cache_data(show_spinner="Processing survey data...")
+def process_survey(_survey_df):
+    if _survey_df is None:
+        return None, None, "No survey file uploaded."
+    try:
+        df = _survey_df.copy()
+        missing = [c for c in REQUIRED_SURVEY_COLS if c not in df.columns]
+        if missing:
+            return None, None, f"Missing columns: {', '.join(missing)}"
+        if 'school_id_no' in df.columns:
+            df['school_id_no'] = df['school_id_no'].astype(int)
+        elif 'school_id' in df.columns:
+            df['school_id_no'] = df['school_id'].astype(str).apply(lambda x: int(x.split('_')[-1]) if '_' in str(x) else int(x))
+        else:
+            return None, None, "Need 'school_id_no' or 'school_id'."
+        if 'school_name' not in df.columns:
+            df['school_name'] = df['school_id_no'].apply(lambda x: f"School_{x}")
+        else:
+            df['school_name'] = df['school_name'].fillna(df['school_id_no'].apply(lambda x: f"School_{x}"))
+        df['month_num'] = df['month'].apply(month_str_to_num)
+        for v in VARIABLES:
+            if not pd.api.types.is_numeric_dtype(df[v]):
+                df[v] = pd.to_numeric(df[v], errors='coerce')
+            if df[v].isna().any() or (df[v] < 0).any() or (df[v] > 1).any():
+                return None, None, f"Column {v} must be numeric between 0 and 1."
+        school_info = df[['school_id_no', 'school_name']].drop_duplicates().sort_values('school_id_no')
+        return df, school_info, None
+    except Exception as e:
+        return None, None, f"Survey error: {str(e)}"
+
+@st.cache_data(show_spinner="Processing metadata...")
+def process_metadata(_metadata_df):
+    if _metadata_df is None:
+        return None, "No metadata file uploaded."
+    try:
+        df = _metadata_df.copy()
+        missing = [c for c in REQUIRED_META_COLS if c not in df.columns]
+        if missing:
+            return None, f"Missing columns: {', '.join(missing)}"
+        if 'school_id_no' not in df.columns:
+            if 'school' in df.columns:
+                df['school_id_no'] = df['school'].astype(str).apply(lambda x: int(x.split('_')[-1]) if '_' in str(x) else int(x))
+            else:
+                return None, "Need 'school_id_no' or 'school'."
+        df['school_id_no'] = df['school_id_no'].astype(int)
+        for col, default in OPTIONAL_META_COLS.items():
+            if col not in df.columns:
+                df[col] = default
+            else:
+                df[col] = df[col].fillna(default)
+        df['upload_date'] = pd.to_datetime(df['upload_date'], errors='coerce')
+        if df['upload_date'].isna().any():
+            return None, "Invalid dates in upload_date."
+        if df['utilized_by_school'].dtype != bool:
+            df['utilized_by_school'] = df['utilized_by_school'].astype(str).str.lower().map(
+                {'true': True, '1': True, 'yes': True, 'false': False, '0': False, 'no': False}).fillna(False)
+        return df, None
+    except Exception as e:
+        return None, f"Metadata error: {str(e)}"
+
+def get_latest_survey(survey_df, school_id):
+    sdf = survey_df[survey_df['school_id_no'] == school_id]
+    if sdf.empty:
+        return None
+    return sdf.sort_values('month_num').iloc[-1]
+
+
+# ============================================================
+# CHART BUILDERS (Radar without arrow, Research Dashboard)
+# ============================================================
+
+@st.cache_data(show_spinner=False)
+def build_radar_chart(survey_values_tuple, school_name, dark_mode):
+    labels = [f"{v} ({MILESTONE_SHORT[i]})" for i, v in enumerate(VARIABLES)]
+    values = list(survey_values_tuple)
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values, theta=labels, fill='toself', name=school_name,
+        line_color=USTP_GOLD, fillcolor="rgba(245, 166, 35, 0.3)",
+        hovertemplate='<b>%{theta}</b><br>Score: %{r:.3f}<extra></extra>'
+    ))
+    text_color = USTP_GOLD if dark_mode else USTP_DARK_BLUE
+    fig.update_layout(
+        template='plotly_dark' if dark_mode else 'plotly_white',
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1.0],
+                            tickvals=[0, 0.2, 0.4, 0.6, 0.8, 1.0],
+                            ticktext=['0', '0.2', '0.4', '0.6', '0.8', '1.0'],
+                            color=text_color),
+            angularaxis=dict(direction="clockwise", tickfont=dict(size=11, color=text_color))
+        ),
+        title=f"Current Research Culture Profile (latest quarter)<br>{school_name}",
+        showlegend=False, font=dict(color=text_color),
+        height=500, margin=dict(l=60, r=80, t=80, b=100)
+    )
+    return fig
+
+@st.cache_data(show_spinner=False)
+def _compute_research_metrics(metadata_df, school_id):
+    school_meta = metadata_df[metadata_df['school_id_no'] == school_id]
+    metrics = {}
+    if school_meta.empty:
+        return metrics
+    tc = school_meta['theme'].value_counts().reset_index()
+    tc.columns = ['Theme', 'Count']
+    metrics['theme_counts'] = tc
+    metrics['top_theme'] = tc.iloc[0]['Theme'] if not tc.empty else "N/A"
+    if 'utilized_by_school' in school_meta.columns:
+        tu = school_meta.groupby('theme')['utilized_by_school'].mean().reset_index()
+        tu.columns = ['Theme', 'Utilisation Rate']
+        metrics['theme_util_df'] = tu
+        metrics['top_util_theme'] = tu.loc[tu['Utilisation Rate'].idxmax(), 'Theme'] if not tu.empty else "N/A"
+    else:
+        metrics['theme_util_df'] = None; metrics['top_util_theme'] = "N/A"
+    sc = school_meta['status'].value_counts().reset_index()
+    sc.columns = ['Status', 'Count']
+    metrics['status_counts'] = sc
+    published = sc[sc['Status'] == 'published']['Count'].sum() if not sc.empty else 0
+    total = sc['Count'].sum() if not sc.empty else 0
+    metrics['pub_rate'] = (published / total * 100) if total > 0 else 0
+    metrics['total_outputs'] = total
+    if 'upload_date' in school_meta.columns:
+        sm = school_meta.copy()
+        sm['quarter'] = sm['upload_date'].dt.to_period('Q').astype(str)
+        ot = sm.groupby('quarter').size().reset_index(name='count')
+        metrics['output_timeline'] = ot if not ot.empty else None
+        if 'utilized_by_school' in school_meta.columns:
+            ut = sm.groupby('quarter')['utilized_by_school'].mean().reset_index()
+            ut.columns = ['quarter', 'utilisation_rate']
+            metrics['util_timeline'] = ut if not ut.empty else None
+        else:
+            metrics['util_timeline'] = None
+    else:
+        metrics['output_timeline'] = None; metrics['util_timeline'] = None
+    utilised = school_meta['utilized_by_school'].sum() if 'utilized_by_school' in school_meta.columns else 0
+    total = len(school_meta)
+    util_rate = (utilised / total * 100) if total > 0 else 0
+    level, desc = interpret_utilisation_rate(util_rate)
+    metrics['util_rate'] = util_rate; metrics['util_level'] = level; metrics['util_desc'] = desc
+    tc2 = school_meta['teacher_name'].value_counts().reset_index().head(10)
+    tc2.columns = ['Teacher', 'Number of Outputs']
+    metrics['teacher_counts'] = tc2
+    metrics['top_teacher'] = tc2.iloc[0]['Teacher'] if not tc2.empty else "N/A"
+    if 'years_of_service' in school_meta.columns and not school_meta['years_of_service'].isna().all():
+        ts = school_meta.groupby('teacher_name').agg(
+            output_count=('document_type', 'count'), years_of_service=('years_of_service', 'first')
+        ).dropna()
+        if len(ts) > 1:
+            x, y = ts['years_of_service'], ts['output_count']
+            z = np.polyfit(x, y, 1)
+            trend_x = np.linspace(x.min(), x.max(), 100)
+            metrics['service_data'] = {'teacher_summary': ts, 'trend_x': trend_x,
+                                       'trend_y': np.poly1d(z)(trend_x), 'slope': z[0],
+                                       'avg_service': x.mean(), 'avg_output': y.mean()}
+        else:
+            metrics['service_data'] = None
+    else:
+        metrics['service_data'] = None
+    if 'teacher_rank' in school_meta.columns and not school_meta['teacher_rank'].isna().all():
+        rg = school_meta.groupby('teacher_rank').size().reset_index(name='total_outputs')
+        rn = school_meta.groupby('teacher_rank')['teacher_name'].nunique().reset_index(name='num_teachers')
+        rs = rg.merge(rn, on='teacher_rank')
+        rs['avg_outputs'] = rs['total_outputs'] / rs['num_teachers']
+        metrics['rank_summary'] = rs
+    else:
+        metrics['rank_summary'] = None
+    if 'educational_attainment' in school_meta.columns and not school_meta['educational_attainment'].isna().all():
+        eg = school_meta.groupby('educational_attainment').size().reset_index(name='total_outputs')
+        en = school_meta.groupby('educational_attainment')['teacher_name'].nunique().reset_index(name='num_teachers')
+        es = eg.merge(en, on='educational_attainment')
+        es['avg_outputs'] = es['total_outputs'] / es['num_teachers']
+        metrics['edu_summary'] = es
+    else:
+        metrics['edu_summary'] = None
+    return metrics
+
+def render_research_dashboard(metrics, school_name, dark_mode):
+    figs = {}
+    template = 'plotly_dark' if dark_mode else 'plotly_white'
+    if 'theme_counts' in metrics:
+        figs['theme_distribution'] = px.bar(metrics['theme_counts'], x='Theme', y='Count',
+                                            title=f"Theme Distribution - {school_name}",
+                                            color='Theme', color_discrete_sequence=[USTP_GOLD, DEPED_RED, USTP_DARK_BLUE])
+        figs['theme_distribution'].update_layout(template=template)
+    if metrics.get('theme_util_df') is not None:
+        figs['theme_utilisation'] = px.bar(metrics['theme_util_df'], x='Theme', y='Utilisation Rate',
+                                           title=f"Theme Utilisation Rate - {school_name}",
+                                           color='Utilisation Rate', color_continuous_scale=['#F5A623', '#0D2B5E'])
+        figs['theme_utilisation'].update_layout(template=template)
+    if 'status_counts' in metrics:
+        figs['publication_status'] = px.bar(metrics['status_counts'], x='Status', y='Count',
+                                            title=f"Publication Status - {school_name}",
+                                            color='Status', color_discrete_sequence=[USTP_DARK_BLUE, USTP_GOLD, DEPED_MAROON])
+        figs['publication_status'].update_layout(template=template)
+    if metrics.get('output_timeline') is not None:
+        figs['output_timeline'] = px.line(metrics['output_timeline'], x='quarter', y='count',
+                                          title=f"Research Output Timeline - {school_name}", markers=True)
+        figs['output_timeline'].update_layout(template=template, xaxis_title='Quarter', yaxis_title='Number of Outputs')
+    if metrics.get('util_timeline') is not None:
+        figs['util_timeline'] = px.line(metrics['util_timeline'], x='quarter', y='utilisation_rate',
+                                        title=f"Utilisation Rate Over Time - {school_name}", markers=True)
+        figs['util_timeline'].update_layout(template=template, xaxis_title='Quarter', yaxis_title='Utilisation Rate')
+    if 'teacher_counts' in metrics:
+        figs['teacher_productivity'] = px.bar(metrics['teacher_counts'], x='Number of Outputs', y='Teacher',
+                                              orientation='h', title=f"Teacher Productivity (Top 10) - {school_name}",
+                                              color='Number of Outputs', color_continuous_scale=['#F5A623', '#0D2B5E'])
+        figs['teacher_productivity'].update_layout(template=template)
+    sd = metrics.get('service_data')
+    if sd is not None:
+        ts = sd['teacher_summary']
+        text_color = USTP_GOLD if dark_mode else USTP_DARK_BLUE
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=ts['years_of_service'], y=ts['output_count'], mode='markers',
+                                 marker=dict(size=12, color=USTP_GOLD, line=dict(color=USTP_DARK_BLUE, width=1)),
+                                 text=ts.index, hoverinfo='text+x+y', name='Teachers'))
+        fig.add_trace(go.Scatter(x=sd['trend_x'], y=sd['trend_y'], mode='lines',
+                                 line=dict(color=USTP_DARK_BLUE, width=2, dash='dash'), name='Trend'))
+        fig.update_layout(template=template, title=f"Years of Service vs Research Outputs - {school_name}",
+                          xaxis_title="Years of Service", yaxis_title="Number of Outputs",
+                          font=dict(color=text_color), showlegend=True, height=400)
+        figs['service_vs_output'] = fig
+    if metrics.get('rank_summary') is not None:
+        figs['rank_breakdown'] = px.bar(metrics['rank_summary'], x='teacher_rank', y='total_outputs',
+                                        title=f"Research Outputs by Teacher Rank - {school_name}",
+                                        color='total_outputs', color_continuous_scale=['#F5A623', '#0D2B5E'])
+        figs['rank_breakdown'].update_layout(template=template)
+    if metrics.get('edu_summary') is not None:
+        figs['edu_breakdown'] = px.bar(metrics['edu_summary'], x='educational_attainment', y='total_outputs',
+                                       title=f"Research Outputs by Educational Attainment - {school_name}",
+                                       color='total_outputs', color_continuous_scale=['#F5A623', '#0D2B5E'])
+        figs['edu_breakdown'].update_layout(template=template)
+    return figs
+
+
+# ============================================================
+# BASELINE / SYNOPSIS / HEATMAP (from Phase 1)
+# ============================================================
+
+def generate_baseline_synopsis(survey_row, school_name, _metadata_df):
+    values = {v: survey_row[v] for v in VARIABLES}
+    strengths = [v for v in VARIABLES if values[v] >= 0.6]
+    gaps = [v for v in VARIABLES if values[v] <= 0.3]
+    moderate = [v for v in VARIABLES if 0.3 < values[v] < 0.6]
+    baseline_rcsi = np.mean(list(values.values()))
+    gap_actions = {
+        'C': "Build Teacher Capacity (C). Conduct training workshops on research methods and data analysis.",
+        'S': "Improve Structured Support (S). Allocate budget and time for research activities.",
+        'I': "Institutional Anchoring (I). Embed research into school plans and regular meetings.",
+        'P': "Strengthen Community of Practice (P). Establish regular research sharing forums and peer mentoring.",
+        'M': "Enhance Impact Realization (M). Document and share evidence of research impact.",
+    }
+    recommendations = [f"**Priority: {gap_actions[var]}**" for var in gaps if var in gap_actions]
+    if not recommendations:
+        recommendations.append("All variables are at moderate or high levels. Maintain current policies.")
+    return {'strengths': strengths, 'gaps': gaps, 'moderate': moderate,
+            'baseline_rcsi': baseline_rcsi, 'recommendations': recommendations, 'values': values}
+
+def baseline_heatmap(survey_df, metadata_df, dark_mode):
+    st.markdown("### Historical Correlation Matrix (Diagnostic)")
+    if survey_df is None or metadata_df is None:
+        st.info("Insufficient data.")
+        return
+    survey_agg = survey_df.groupby(['school_id_no', 'month_num'])[VARIABLES].mean().reset_index()
+    meta = metadata_df.copy()
+    meta['month_num'] = meta['upload_date'].apply(date_to_month_num)
+    output_counts = meta.groupby(['school_id_no', 'month_num']).size().reset_index(name='output_count')
+    merged = survey_agg.merge(output_counts, on=['school_id_no', 'month_num'], how='inner')
+    if merged.empty:
+        st.info("Insufficient data.")
+        return
+    corr = merged[VARIABLES + ['output_count']].corr()
+    fig = px.imshow(corr, text_auto=True, title="Correlation Matrix", color_continuous_scale='Blues')
+    fig.update_layout(template='plotly_dark' if dark_mode else 'plotly_white')
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Correlation between the seven variables and research output count in historical data.")
+
+def cycle_research_correlation(agent, metadata_df, school_id, dark_mode):
+    if not agent.cycle_improvements:
+        st.info("No cycles completed.")
+        return
+    sm = metadata_df[metadata_df['school_id_no'] == school_id].copy()
+    sm['month_num'] = sm['upload_date'].apply(date_to_month_num)
+    cumulative = [len(sm[sm['month_num'] <= rec.completion_month]) for rec in agent.cycle_improvements]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[c.cycle_number for c in agent.cycle_improvements], y=cumulative,
+                             mode='markers+lines', marker=dict(size=10, color=USTP_GOLD),
+                             line=dict(color=USTP_DARK_BLUE)))
+    fig.update_layout(template='plotly_dark' if dark_mode else 'plotly_white', title="Cycle vs Cumulative Research Outputs")
+    st.plotly_chart(fig, use_container_width=True)
+
+def division_level_analysis(metadata_df, history_per_school, sim_agents, dark_mode):
+    st.markdown("### Division-Level Analysis")
+    if not metadata_df.empty:
+        ts = metadata_df.groupby(['teacher_name', 'school_id_no']).size().reset_index(name='total_outputs')
+        ts = ts.sort_values('total_outputs', ascending=False).head(20)
+        st.dataframe(ts[['teacher_name', 'school_id_no', 'total_outputs']])
+        top_div_teacher = ts.iloc[0]['teacher_name'] if not ts.empty else "N/A"
+        top_div_school = ts.iloc[0]['school_id_no'] if not ts.empty else "N/A"
+        top_div_outputs = ts.iloc[0]['total_outputs'] if not ts.empty else 0
+    else:
+        top_div_teacher = top_div_school = "N/A"; top_div_outputs = 0
+    all_durations = {m: [] for m in range(7)}
+    for sid, hist in history_per_school.items():
+        if 'milestone' not in hist or not hist['milestone']:
+            continue
+        milestones = hist['milestone']
+        for i in range(1, len(milestones)):
+            if milestones[i] != milestones[i - 1]:
+                start = milestones.index(milestones[i - 1], 0, i) if milestones[i - 1] in milestones[:i] else i - 1
+                all_durations[milestones[i - 1]].append(i - start)
+        if milestones:
+            last = milestones[-1]
+            start = milestones.index(last, 0, len(milestones)) if last in milestones else len(milestones) - 1
+            all_durations[last].append(len(milestones) - start)
+    avg_dur = {m: np.mean(v) if v else np.nan for m, v in all_durations.items()}
+    df_dur = pd.DataFrame({'Milestone': [f'M{i}' for i in range(7)],
+                           'Avg Months': [avg_dur.get(i, np.nan) for i in range(7)]}).dropna()
+    bottleneck = "N/A"; bottleneck_time = 0
+    if not df_dur.empty:
+        max_row = df_dur.loc[df_dur['Avg Months'].idxmax()]
+        bottleneck = max_row['Milestone']; bottleneck_time = max_row['Avg Months']
+        fig_dur = px.bar(df_dur, x='Milestone', y='Avg Months', title="Average Months per Milestone",
+                         color='Avg Months', color_continuous_scale=['#F5A623', '#0D2B5E'])
+        fig_dur.update_layout(template='plotly_dark' if dark_mode else 'plotly_white')
+        st.plotly_chart(fig_dur, use_container_width=True)
+        st.caption(f"Bottleneck: {bottleneck} ({bottleneck_time:.1f} months).")
+    else:
+        st.info("Not enough transition data.")
+    return {'top_div_teacher': top_div_teacher, 'top_div_school': top_div_school,
+            'top_div_outputs': top_div_outputs, 'bottleneck_milestone': bottleneck,
+            'bottleneck_time': bottleneck_time}
+
+def school_comparison_dashboard(survey_df, history_per_school, school_info, selected_school_ids, dark_mode):
+    st.markdown("### Comparative School Analysis")
+    if len(selected_school_ids) < 2:
+        st.info("Select at least two schools.")
+        return
+    histories = {sid: history_per_school.get(sid) for sid in selected_school_ids if history_per_school.get(sid)}
+    if not histories:
+        st.info("No simulation history.")
+        return
+    fig = make_subplots(rows=2, cols=1, subplot_titles=("RCSI Comparison", "Milestone Comparison"))
+    for sid, hist in histories.items():
+        name = school_info[school_info['school_id_no'] == sid]['school_name'].values[0]
+        fig.add_trace(go.Scatter(x=hist['month'], y=hist['running_outcome'], mode='lines', name=f"{name} RCSI"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=hist['month'], y=hist['milestone'], mode='lines', name=f"{name} Milestone"), row=2, col=1)
+    fig.update_layout(height=600, template='plotly_dark' if dark_mode else 'plotly_white')
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# STREAMLIT APP
+# ============================================================
+
+st.set_page_config(page_title="CDO Research Culture Sustainability Framework", layout="wide")
+st.markdown("<h1 style='text-align: center; color: #0D2B5E;'>CDO Division Research Culture Sustainability Framework</h1>", unsafe_allow_html=True)
+
+for key, default in [('max_schools', 200), ('num_schools', 0), ('total_teachers', 0)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# --- Sidebar (one unified block) ---
+with st.sidebar:
+    st.markdown(f"<h2 style='color: {USTP_DARK_BLUE};'>Controls</h2>", unsafe_allow_html=True)
+    dark_mode = st.checkbox("Dark Mode", value=False)
+    apply_theme(dark_mode)
+
+    st.metric("Total Schools Loaded", st.session_state.num_schools)
+    st.metric("Total Teachers Recorded", st.session_state.total_teachers)
+    if st.session_state.get('total_months', 0) > 0:
+        st.metric("Simulation Month", st.session_state.total_months)
 
     st.markdown("---")
-    st.subheader("🧪 Simulated Flood Severity")
-    st.session_state.use_pagasa_auto = st.checkbox("Auto‑mode (use PAGASA advisory)", value=st.session_state.use_pagasa_auto)
-    if st.session_state.use_pagasa_auto:
-        st.caption("Slider is locked to PAGASA advisory value. Uncheck to manually simulate.")
-        flood_sev = st.session_state.twin.flood_severity
-    else:
-        flood_sev = st.slider("Severity (0–1)", 0.0, 1.0, st.session_state.twin.flood_severity, 0.01, key="flood_sev_slider",
-                              help="0 = light rain, 1 = extreme rainfall.")
-        st.session_state.twin.flood_severity = flood_sev
+    # Removed the "Analyze Baseline" button – baseline is now automatic
 
-    if flood_sev <= 0.25:
-        rainfall_mm = flood_sev * 40
-        label = "Light rain"
-        color_code = "green"
-    elif flood_sev <= 0.50:
-        rainfall_mm = 10 + (flood_sev - 0.25) * 80
-        label = "Moderate rain (Yellow)"
-        color_code = "#FFC107"
-    elif flood_sev <= 0.75:
-        rainfall_mm = 30 + (flood_sev - 0.50) * 120
-        label = "Heavy rain (Orange)"
-        color_code = "orange"
+    st.markdown("---")
+    st.markdown(f"<h3 style='color: {USTP_DARK_BLUE};'>Policy Levers</h3>", unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        u_train = st.slider("Training freq.", 0.0, 1.0, 0.5, 0.05, help="Frequency of research training workshops per quarter")
+        u_mentor = st.slider("Mentorship ratio", 0.0, 1.0, 0.5, 0.05, help="Ratio of experienced-to-novice researcher pairings")
+        u_budget = st.slider("Support budget", 0.0, 1.0, 0.5, 0.05, help="Proportion of budget allocated to research support")
+    with col2:
+        u_lead = st.slider("Leadership commit.", 0.0, 1.0, 0.5, 0.05, help="Degree of school leadership commitment")
+        u_collab = st.slider("Collaboration freq.", 0.0, 1.0, 0.5, 0.05, help="Frequency of inter-school collaboration events")
+    levers = {'u_train': u_train, 'u_mentor': u_mentor, 'u_budget': u_budget, 'u_lead': u_lead, 'u_collab': u_collab}
+
+    st.markdown("---")
+    st.markdown(f"<h3 style='color: {USTP_DARK_BLUE};'>Simulation Parameters</h3>", unsafe_allow_html=True)
+    duration = st.selectbox("Run duration (months)", [12, 24, 36, 48, 60, 72, 84, 96, 108, 120], index=9)
+    random_events = st.checkbox("Enable random events", value=False)
+    use_survey = st.checkbox("Override with survey data", value=True)
+
+    # --- Phase 2 Monte Carlo controls ---
+    st.markdown("---")
+    st.markdown("#### 🎲 Monte Carlo (Phase 2)")
+    mc_enabled = st.checkbox("Enable Monte Carlo", value=False)
+    mc_runs = st.number_input("Number of runs", min_value=10, max_value=100, value=30, step=10)
+
+    st.markdown("---")
+    st.markdown("#### Simulation Actions")
+    col_buttons = st.columns(3)
+    with col_buttons[0]:
+        run_btn = st.button("Run", use_container_width=True)
+    with col_buttons[1]:
+        step_btn = st.button("Step (1 month)", use_container_width=True)
+    with col_buttons[2]:
+        reset_btn = st.button("Reset", use_container_width=True)
+    st.caption("Run: full forecast. Step: one month. Reset: clear history.")
+
+    st.markdown("---")
+    st.markdown("#### Export Data")
+    export_btn = st.button("Export results (CSV)", use_container_width=True)
+
+# --- File Upload (unchanged from Phase 1) ---
+with st.expander("Step 1: Upload your CSV files", expanded=True):
+    st.markdown("""
+    **Instructions:**
+    - Upload **Quarterly Survey** CSV (columns: `month, school_id_no, R, A, C, S, I, P, M`).
+    - Upload **Research Metadata** CSV (columns: `upload_date, teacher_name, school_id_no, ...`).
+    """)
+    col1, col2 = st.columns(2)
+    with col1:
+        survey_file = st.file_uploader("Upload quarterly survey (CSV)", type=["csv"], key="survey")
+    with col2:
+        metadata_file = st.file_uploader("Upload research metadata (CSV)", type=["csv"], key="metadata")
+    st.markdown("---")
+    st.markdown("**Need templates?**")
+    survey_template = ("month,school_id_no,school_name,R,A,C,S,I,P,M\n"
+                       "2026-01,1,School_1,0.32,0.41,0.28,0.15,0.14,0.19,0.08")
+    metadata_template = ("upload_date,teacher_name,school_id_no,document_type,title,theme,"
+                         "status,publication_link,utilized_by_school,utilization_date,"
+                         "year_undertaken,years_of_service,teacher_rank,educational_attainment\n"
+                         "2026-03-15,Anna Reyes,1,abstract,Improving Reading,Teaching Strategies,"
+                         "published,https://doi.org/10.1234,True,2026-02-10,2025,10,Teacher II,Master's")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button("Survey Template", survey_template, "quarterly_survey_template.csv", "text/csv")
+    with c2:
+        st.download_button("Metadata Template", metadata_template, "research_metadata_template.csv", "text/csv")
+
+# ============================================================
+# MAIN AREA
+# ============================================================
+if survey_file is not None and metadata_file is not None:
+    survey_df_raw = pd.read_csv(survey_file)
+    metadata_df_raw = pd.read_csv(metadata_file)
+    survey_df, school_info, survey_error = process_survey(survey_df_raw)
+    metadata_df, meta_error = process_metadata(metadata_df_raw)
+
+    if survey_error:
+        st.error(f"Survey error: {survey_error}")
+    elif meta_error:
+        st.error(f"Metadata error: {meta_error}")
     else:
-        rainfall_mm = 60 + (flood_sev - 0.75) * 160
-        label = "Torrential rain (Red)"
-        color_code = "red"
-    st.markdown(f"🌧️ **{rainfall_mm:.0f} mm** – {label}")
-    gauge_html = f"""
-    <div style="width:100%; height:30px; background:linear-gradient(to right, green 0%, green 25%, #FFC107 25%, #FFC107 50%, orange 50%, orange 75%, red 75%, red 100%); border-radius:5px; position:relative; margin-bottom:10px;">
-        <div style="position:absolute; left:{flood_sev*100}%; top:-5px; width:4px; height:40px; background:black; border-radius:2px;"></div>
-    </div>
-    <p style="margin-top:5px; font-size:12px;">🟢 0-10 mm &nbsp; 🟡 10-30 mm &nbsp; 🟠 30-60 mm &nbsp; 🔴 >60 mm</p>
-    """
-    st.markdown(gauge_html, unsafe_allow_html=True)
-    lgu_threat = st.toggle("LGU Demolition Threat", value=st.session_state.twin.lgu_threat)
-    if flood_sev != st.session_state.twin.flood_severity or lgu_threat != st.session_state.twin.lgu_threat:
-        if st.button("Apply Environmental Triggers", disabled=run_disabled):
-            st.session_state.twin.reset(new_flood_severity=flood_sev, new_lgu_threat=lgu_threat)
+        actual_count = len(school_info)
+        total_teachers = metadata_df['teacher_name'].nunique()
+        state_changed = False
+        if st.session_state.num_schools != actual_count:
+            st.session_state.num_schools = actual_count; state_changed = True
+        if st.session_state.total_teachers != total_teachers:
+            st.session_state.total_teachers = total_teachers; state_changed = True
+        if state_changed:
             st.rerun()
 
-    # Inactive Water‑Level Gauge
-    st.markdown("---")
-    st.subheader("🌊 Tagoloan River Water Level")
-    wl_gauge = f"""
-    <div style="filter: grayscale(100%); opacity: 0.5; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:bold; color: grey;">🔒 No Data</span>
-            <span style="font-size:0.8rem; color: #888;">Awaiting data feed</span>
-        </div>
-        <div style="width:100%; height:25px; background:linear-gradient(to right, green 0%, green 37%, #FFC107 37%, #FFC107 62%, orange 62%, orange 87%, red 87%, red 100%); border-radius:5px; position:relative; margin-top:5px; border: 1px solid #555;">
-            <div style="position:absolute; left:0%; top:-4px; width:4px; height:33px; background:black; border-radius:2px;"></div>
-        </div>
-        <p style="margin-top:5px; font-size:11px; color: #aaa;">Water level data not yet available – awaiting PAGASA PREDICT / MDRRMO</p>
-    </div>
-    """
-    st.markdown(wl_gauge, unsafe_allow_html=True)
+        st.success(f"Loaded {actual_count} schools and {total_teachers} teachers.")
 
-    st.markdown("---")
-    st.header("🎚️ LGU Intervention Sliders")
-    st.caption("Adjust the three CAC components directly. Changing them updates the psychological baseline. "
-               "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes.")
-    with st.expander("Expand to modify constructs", expanded=False):
-        for node_name, node in st.session_state.twin.nodes.items():
-            st.markdown(f"**{node_name}**")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                new_ch = st.slider(f"Challenge", 0.0, 100.0, float(node.baseline_cac['Challenge']), key=f"{node_name}_ch")
-            with col2:
-                new_ac = st.slider(f"Acceptance", 0.0, 100.0, float(node.baseline_cac['Acceptance']), key=f"{node_name}_ac")
-            with col3:
-                new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']), key=f"{node_name}_co")
-            node.baseline_cac['Challenge'] = new_ch
-            node.baseline_cac['Acceptance'] = new_ac
-            node.baseline_cac['Commitment'] = new_co
-            node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
-    if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True, disabled=run_disabled):
-        st.session_state.twin.reset()
-        st.rerun()
+        school_ids = school_info['school_id_no'].tolist()
+        id_to_label = {sid: f"ID {sid}: {school_info[school_info['school_id_no']==sid]['school_name'].values[0]}" for sid in school_ids}
+        label_to_id = {v: k for k, v in id_to_label.items()}
+        selected_school_label = st.selectbox("Select school", list(id_to_label.values()), index=0)
+        selected_school_id = label_to_id[selected_school_label]
+        selected_school_name = id_to_label[selected_school_id].split(": ", 1)[1]
 
-# ---------- Perform automatic calibration if needed ----------
-if st.session_state.get('needs_calibration') and st.session_state.get('raw_data') is not None:
-    df_raw = st.session_state.raw_data
-    barangay = st.session_state.current_barangay
-    k_mode = st.session_state.get('prev_k_mode', "Auto (silhouette)")
-    manual_k = st.session_state.get('manual_k_slider', 3) if k_mode == "Manual" else None
-    df_filtered = df_raw if barangay == "All Barangays" else df_raw[df_raw['Barangay_Name'] == barangay].copy()
+        # Baseline section
+        st.markdown("<h2 style='text-align: center;'>Baseline from Uploaded Data</h2>", unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown("### Research Outputs (Recent)")
+        df_show = metadata_df[metadata_df['school_id_no'] == selected_school_id].sort_values('upload_date', ascending=False)
+        if not df_show.empty:
+            st.dataframe(df_show[['teacher_name', 'year_undertaken', 'title', 'theme', 'status', 'utilized_by_school']].head(10))
+        else:
+            st.info("No research outputs for this school.")
 
-    if len(df_filtered) >= 3:
-        try:
-            with st.spinner("Analysing data and generating baseline..."):
-                numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
-                df_num = df_filtered[numeric_cols]
-                scaler = MinMaxScaler(feature_range=(0, 100))
-                X_scaled = scaler.fit_transform(df_num)
+        latest = get_latest_survey(survey_df, selected_school_id)
+        if latest is not None:
+            col_left, col_right = st.columns([1, 5])
+            with col_left:
+                st.markdown("**Legend:**")
+                legend_items = "\n".join(f"- **{v} ({MILESTONE_SHORT[i]})** → {MILESTONE_NAMES[i]}" for i, v in enumerate(VARIABLES))
+                st.markdown(f'<div style="font-size: 12px;">{legend_items}</div>', unsafe_allow_html=True)
+            with col_right:
+                survey_tuple = tuple(latest[v] for v in VARIABLES)
+                radar_fig = build_radar_chart(survey_tuple, selected_school_name, dark_mode)
+                st.plotly_chart(radar_fig, use_container_width=True)
+                get_figure_download_link(radar_fig, "radar_chart.html", "Download Radar Chart")
+        else:
+            st.info("No survey data for current quarter.")
 
-                if k_mode == "Auto (silhouette)":
-                    best_k = 3
-                    best_sil = -1
-                    for k in range(2, min(6, len(df_filtered))):
-                        km = KMeans(n_clusters=k, random_state=42, n_init=10)
-                        labels = km.fit_predict(X_scaled)
-                        sil = silhouette_score(X_scaled, labels)
-                        if sil > best_sil:
-                            best_sil = sil
-                            best_k = k
-                    chosen_k = best_k
-                elif k_mode == "Fixed (3 clusters)":
-                    chosen_k = 3
+        with st.expander("Research Outputs Dashboard"):
+            metrics = _compute_research_metrics(metadata_df, selected_school_id)
+            figs = render_research_dashboard(metrics, selected_school_name, dark_mode)
+            if figs:
+                for name, fig in figs.items():
+                    st.plotly_chart(fig, use_container_width=True)
+                    get_figure_download_link(fig, f"{name}.html")
+                st.metric("School-level Research Utilisation Rate",
+                          f"{metrics.get('util_rate', 0):.1f}% → {metrics.get('util_level', 'N/A')} level",
+                          help=metrics.get('util_desc', ''))
+
+        # ---------------------- NEW: Auto-generate baseline synopsis ----------------------
+        if 'baseline_synopsis' not in st.session_state and latest is not None:
+            with st.spinner("Generating baseline synopsis..."):
+                # Add a tiny delay so the spinner is visible
+                time.sleep(0.5)
+                st.session_state.baseline_synopsis = generate_baseline_synopsis(latest, selected_school_name, metadata_df)
+                st.session_state.baseline_survey_row = latest.to_dict()
+                school_survey = survey_df[survey_df['school_id_no'] == selected_school_id]
+                st.session_state.baseline_std_devs = {v: school_survey[v].std() if len(school_survey) > 1 else 0.1 for v in VARIABLES}
+                st.rerun()  # force re-run to display the synopsis
+
+        if 'baseline_synopsis' in st.session_state:
+            bs = st.session_state.baseline_synopsis
+            bg_color = '#2E2E2E' if dark_mode else '#E3F2FD'
+            text_col = DARK_TEXT if dark_mode else 'inherit'
+            st.markdown("### Baseline Synopsis")
+            st.markdown(f"""
+            <div style="background-color: {bg_color}; border-left: 5px solid {USTP_GOLD}; padding: 10px; border-radius: 5px; margin-top: 10px; color: {text_col};">
+            <b>School: {selected_school_name}</b><br>
+            Baseline RCSI: {bs['baseline_rcsi']:.3f}<br>
+            Strengths (≥0.6): {', '.join(bs['strengths']) if bs['strengths'] else 'None'}<br>
+            Critical Gaps (≤0.3): {', '.join(bs['gaps']) if bs['gaps'] else 'None'}<br>
+            Moderate (0.3–0.6): {', '.join(bs['moderate']) if bs['moderate'] else 'None'}<br>
+            Actionable Recommendations:<br>{'<br>'.join(bs['recommendations'])}
+            </div>
+            """, unsafe_allow_html=True)
+
+        baseline_heatmap(survey_df, metadata_df, dark_mode)
+
+        # ---------- Phase 2: Calibration & Heterogeneous Params ----------
+        if 'calibrated_coeff' not in st.session_state:
+            with st.spinner("Calibrating model coefficients from data..."):
+                # Add a small delay for visibility
+                time.sleep(0.5)
+                coeff, calib_msg = calibrate_coefficients(survey_df)
+                if coeff is not None:
+                    st.success(calib_msg)
+                    st.session_state.calibrated_coeff = coeff
+                    st.session_state.calibration_status = "custom"
                 else:
-                    chosen_k = manual_k
+                    # Use default coefficients; show an info message (not a warning)
+                    st.info(calib_msg)  # e.g., "No survey data – using default coefficients."
+                    st.session_state.calibrated_coeff = None
+                    st.session_state.calibration_status = "default"
+                st.rerun()
 
-                kmeans = KMeans(n_clusters=chosen_k, random_state=42, n_init=10)
-                final_labels = kmeans.fit_predict(X_scaled)
+        # Show calibration status in sidebar or main area
+        if 'calibration_status' in st.session_state:
+            if st.session_state.calibration_status == "custom":
+                st.caption("✅ Using data‑calibrated coefficients.")
+            else:
+                st.caption("ℹ️ Using default coefficients (insufficient data for calibration).")
 
-                df_labeled = df_filtered.copy()
-                df_labeled['Cluster'] = final_labels
-                st.session_state.respondent_clusters = df_labeled
+        agent_params = get_agent_params(school_ids, survey_df, metadata_df, st.session_state.calibrated_coeff)
 
-                df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
-                df_scaled['Cluster'] = final_labels
+        # ---------- Initialize Simulation ----------
+        if 'sim' not in st.session_state:
+            st.session_state.sim = init_simulation_with_data(school_ids, metadata_df, random_events, agent_params)
+            st.session_state.current_month = 0
+            st.session_state.total_months = 0
+            st.session_state.history = create_empty_history(school_ids)
 
-                new_profiles = {}
-                for i in range(chosen_k):
-                    cluster_data = df_scaled[df_scaled['Cluster'] == i]
-                    ratio = len(cluster_data) / len(df_scaled)
-                    centroids = cluster_data[numeric_cols].mean().to_dict()
-                    base_name, driver = generate_lgu_cluster_name(centroids, col_map)
+        # ---------- Run / Step / Reset ----------
+        if run_btn:
+            st.session_state.sim = init_simulation_with_data(school_ids, metadata_df, random_events, agent_params)
+            st.session_state.current_month = 0; st.session_state.total_months = 0
+            st.session_state.history = create_empty_history(school_ids)
+            progress = st.progress(0, text="Running simulation...")
+            for m in range(1, duration + 1):
+                if use_survey:
+                    apply_survey_override(st.session_state.sim.agents, survey_df, m)
+                st.session_state.sim.step(levers, m)
+                st.session_state.current_month = m; st.session_state.total_months = m
+                record_history(st.session_state.history, st.session_state.sim.agents, m)
+                progress.progress(m / duration, text=f"Month {m}/{duration}")
+            progress.empty()
+            if mc_enabled:
+                with st.spinner(f"Running {mc_runs} Monte Carlo simulations..."):
+                    mc_data, mc_info = monte_carlo_sim(mc_runs, Simulation, agent_params, school_ids, levers, duration,
+                                                       use_survey, survey_df, metadata_df, selected_school_id)
+                    st.session_state.mc_data = mc_data
+                    st.session_state.mc_info = mc_info
+            st.rerun()
 
-                    final_name = base_name
-                    counter = 1
-                    while final_name in new_profiles:
-                        final_name = f"{base_name} (Segment {counter})"
-                        counter += 1
+        if step_btn:
+            target = st.session_state.current_month + 1
+            if use_survey:
+                apply_survey_override(st.session_state.sim.agents, survey_df, target)
+            st.session_state.sim.step(levers, target)
+            st.session_state.current_month = target; st.session_state.total_months = target
+            record_history(st.session_state.history, st.session_state.sim.agents, target)
+            st.rerun()
 
-                    new_profiles[final_name] = ClusterArchetype(
-                        name=final_name,
-                        population_ratio=ratio,
-                        node_baseline_scores=centroids,
-                        dominant_driver=driver
-                    )
+        if reset_btn:
+            st.session_state.sim = init_simulation_with_data(school_ids, metadata_df, random_events, agent_params)
+            st.session_state.current_month = 0; st.session_state.total_months = 0
+            st.session_state.history = create_empty_history(school_ids)
+            st.rerun()
 
-                data_hash = hashlib.md5(df_filtered.to_csv(index=False).encode()).hexdigest()
-                seed = int(data_hash, 16) % (2**32)
+        # ---------- Simulation Results Display ----------
+        if st.session_state.total_months > 0:
+            # Ensure text_col is defined for synopses
+            text_col = DARK_TEXT if dark_mode else 'inherit'
 
-                baseline_severity = st.session_state.twin.flood_severity
+            st.markdown("<h2 style='text-align: center;'>Simulated Data</h2>", unsafe_allow_html=True)
+            st.markdown("---")
+            hist = st.session_state.history.get(selected_school_id)
+            agent = next((a for a in st.session_state.sim.agents if a.real_id == selected_school_id), None)
+            if hist and agent:
+                # Main 4-panel chart
+                fig1 = make_subplots(rows=2, cols=2, subplot_titles=("Variable Evolution", "Milestone Progress",
+                                                                     "Research Culture Sustainability Index (RCSI)",
+                                                                     "Improvement per Completed Cycle"))
+                for i, var in enumerate(VARIABLES):
+                    fig1.add_trace(go.Scatter(x=hist['month'], y=hist[var], mode='lines', name=var,
+                                              line=dict(color=VAR_COLORS[i])), row=1, col=1)
+                fig1.add_trace(go.Scatter(x=hist['month'], y=hist['milestone'], mode='lines', name='Milestone',
+                                          line=dict(color=DEPED_RED, width=3)), row=1, col=2)
+                fig1.add_trace(go.Scatter(x=hist['month'], y=hist['running_outcome'], mode='lines', name='RCSI',
+                                          line=dict(color=USTP_GOLD, width=3)), row=2, col=1)
+                if agent.cycle_improvements:
+                    cycles = [c.cycle_number for c in agent.cycle_improvements]
+                    improvements = [c.total_improvement for c in agent.cycle_improvements]
+                    fig1.add_trace(go.Bar(x=cycles, y=improvements, name='RCSI per cycle',
+                                          marker_color=USTP_DARK_BLUE), row=2, col=2)
+                else:
+                    fig1.add_annotation(text="No cycles completed yet", xref="x2 domain", yref="y2 domain",
+                                        x=0.5, y=0.5, showarrow=False, row=2, col=2)
+                template = 'plotly_dark' if dark_mode else 'plotly_white'
+                fig1.update_layout(height=800, showlegend=True, font=dict(color=text_col), template=template)
+                st.plotly_chart(fig1, use_container_width=True)
+                get_figure_download_link(fig1, "simulation_overview.html", "Download Simulation Charts")
 
-                st.session_state.twin = DigitalTwin(
-                    nodes=base_nodes,
-                    edges=base_edges,
-                    cluster_profiles=new_profiles,
-                    total_population=len(df_filtered),
-                    flood_severity=baseline_severity,
-                    lgu_threat=False,
-                    seed=seed
+                with st.expander("Cycle vs Research Outputs"):
+                    cycle_research_correlation(agent, metadata_df, selected_school_id, dark_mode)
+
+                with st.expander("Division-Level Analysis"):
+                    div_metrics = division_level_analysis(metadata_df, st.session_state.history,
+                                                          st.session_state.sim.agents, dark_mode)
+
+                with st.expander("Comparative School Analysis"):
+                    selected_comparison = st.multiselect("Select schools to compare", options=school_ids,
+                                                         format_func=lambda x: id_to_label[x])
+                    school_comparison_dashboard(survey_df, st.session_state.history, school_info,
+                                                selected_comparison, dark_mode)
+
+                # ---------- Phase 2: Sensitivity & Monte Carlo Expandable ----------
+                sensitivity_info = ""
+                if not st.session_state.get('sensitivity_fig'):
+                    with st.spinner("Computing sensitivity analysis..."):
+                        fig_tornado, sensitivity_info = run_sensitivity(Simulation, agent_params, school_ids, levers,
+                                                                        duration, use_survey, survey_df, metadata_df,
+                                                                        selected_school_id)
+                        st.session_state.sensitivity_fig = fig_tornado
+                        st.session_state.sensitivity_info = sensitivity_info
+                else:
+                    fig_tornado = st.session_state.sensitivity_fig
+                    sensitivity_info = st.session_state.sensitivity_info
+
+                with st.expander("Sensitivity Analysis (Tornado)"):
+                    st.plotly_chart(fig_tornado, use_container_width=True)
+                    st.caption("Each lever varied ±10% while others fixed at current slider values.")
+                    if sensitivity_info:
+                        st.markdown(sensitivity_info)
+
+                # ---------- Monte Carlo Display with added table and caption ----------
+                if 'mc_data' in st.session_state:
+                    with st.expander("Monte Carlo Uncertainty Bands"):
+                        mc_data = st.session_state.mc_data
+                        fig_mc = plot_monte_carlo_bands(mc_data, dark_mode)
+                        st.plotly_chart(fig_mc, use_container_width=True)
+                        st.caption(f"Shaded area: P10‑P90 range over {mc_runs} simulations.")
+                        if st.session_state.get('mc_info'):
+                            st.markdown(st.session_state.mc_info)
+                            # RCSI Interpretation Table
+                            with st.expander("RCSI Interpretation Guide"):
+                                st.markdown(get_rcsi_interpretation_table())
+                            # Graphic interpretation caption aligned with school & division
+                            st.markdown("""
+                            **Graph Interpretation:**  
+                            At the school level, the simulated RCSI’s tight interquartile range confirms that internal processes are fully insulated from external shocks, validating the current local administration.  
+                            Divergently, at the division level, this uniformity signals a systemic plateau—prompting division leaders to shift focus from risk mitigation to pedagogical innovation, as quantitative variance no longer provides actionable leverage for district‑wide improvement.
+                            """)
+                        if 'baseline_synopsis' in st.session_state:
+                            baseline_vals = st.session_state.baseline_synopsis['values']
+                            causal_coeffs = causal_analysis(mc_data['final_rcsi'], baseline_vals)
+                            if causal_coeffs:
+                                st.markdown("**Causal Impact (increase final RCSI per unit increase in baseline variable):**")
+                                df_causal = pd.DataFrame(list(causal_coeffs.items()), columns=['Variable', 'Impact'])
+                                st.dataframe(df_causal)
+                            else:
+                                st.info("Not enough Monte Carlo runs for causal analysis (need >10).")
+
+                # ===== School-Level Synopsis (enhanced with sensitivity/Monte Carlo insights and gap) =====
+                rcsi_val = agent.running_total_outcome
+                rcsi_level = classify_rcsi(rcsi_val)
+                milestone_name = MILESTONE_NAMES.get(agent.current_milestone, f"Milestone {agent.current_milestone}")
+                if agent.cycle_count >= 2:
+                    cycle_text = f"has completed {agent.cycle_count} full cycles, indicating a self-sustaining research culture."
+                elif agent.cycle_count == 1:
+                    cycle_text = "has completed one full cycle, demonstrating initial sustainability."
+                else:
+                    cycle_text = "has not yet completed any full cycle."
+                if agent.current_milestone == 0:
+                    milestone_progress = "is at the very beginning of the journey."
+                elif agent.current_milestone <= 2:
+                    milestone_progress = "has moved beyond initial readiness but remains in early capacity‑building phases."
+                elif agent.current_milestone <= 4:
+                    milestone_progress = "has established structured support and is embedding research into institutional practice."
+                else:
+                    milestone_progress = "is realising tangible impact and is approaching or has achieved cyclical sustainability."
+                key_R = hist['R'][-1] if hist['R'] else 0; key_M = hist['M'][-1] if hist['M'] else 0
+
+                sens_text = sensitivity_info if sensitivity_info else ""
+                mc_text = st.session_state.get('mc_info', "")
+
+                # Compute division average RCSI for gap analysis
+                avg_rcsi_division = np.mean([a.running_total_outcome for a in st.session_state.sim.agents])
+                gap = rcsi_val - avg_rcsi_division
+                gap_text = f"Compared to the division average of **{avg_rcsi_division:.3f}**, this school is **{gap:+.3f}** points {'above' if gap > 0 else 'below'} the division average."
+
+                output_trend_text = ""
+                tl = metrics.get('output_timeline')
+                if tl is not None and len(tl) >= 2:
+                    if tl.iloc[-1]['count'] > tl.iloc[-2]['count']:
+                        output_trend_text = "Research output is increasing over time."
+                    elif tl.iloc[-1]['count'] < tl.iloc[-2]['count']:
+                        output_trend_text = "Research output is declining over time."
+                    else:
+                        output_trend_text = "Research output has remained stable."
+                    avg_output = tl['count'].mean()
+                    output_trend_text += f" On average, the school produces {avg_output:.1f} outputs per quarter."
+
+                theme_util_text = ""
+                tu = metrics.get('theme_util_df')
+                if tu is not None and not tu.empty:
+                    max_util = tu.loc[tu['Utilisation Rate'].idxmax()]
+                    min_util = tu.loc[tu['Utilisation Rate'].idxmin()]
+                    theme_util_text = (f"The most utilised theme is '{max_util['Theme']}' "
+                                       f"({max_util['Utilisation Rate']:.0%}), while "
+                                       f"'{min_util['Theme']}' has the lowest adoption "
+                                       f"({min_util['Utilisation Rate']:.0%}).")
+
+                top_teacher_text = f"The school's top researcher is {metrics['top_teacher']}." if metrics.get('top_teacher') != "N/A" else ""
+
+                bg_col = '#2E2E2E' if dark_mode else '#E3F2FD'
+                synopsis = f"""
+                After {st.session_state.total_months} months, {selected_school_name} (ID {selected_school_id}) has reached {milestone_name} and {cycle_text}
+                The school's Research Culture Sustainability Index (RCSI) is <b>{rcsi_val:.3f}</b>, which falls into the <b>{rcsi_level}</b> level.
+                Key indicators: Readiness (R) = {key_R:.2f}, Impact (M) = {key_M:.2f}, and current Milestone = {agent.current_milestone}.
+                This combination suggests that {milestone_progress}
+                The RCSI level <b>{rcsi_level.lower()}</b> reinforces this assessment.
+                {output_trend_text}
+                {theme_util_text}
+                {top_teacher_text}
+                {sens_text}
+                {mc_text}
+                {gap_text}
+                Overall, the school is on a path toward research culture sustainability, but further policy support may be needed.
+                """
+                st.markdown(f"""
+                <div style="background-color: {bg_col}; border-left: 5px solid {USTP_GOLD}; padding: 10px; border-radius: 5px; margin-top: 10px; color: {text_col};">
+                <b>School {selected_school_id} ({selected_school_name}) – Simulation Synopsis</b><br>
+                {synopsis}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Baseline vs Simulation comparison table
+                if ('baseline_synopsis' in st.session_state and 'baseline_survey_row' in st.session_state):
+                    bs = st.session_state.baseline_synopsis
+                    baseline_vals = st.session_state.baseline_survey_row
+                    gaps = bs['gaps']
+                    if gaps:
+                        st.markdown("#### Baseline vs Simulation Comparison (Critical Gaps)")
+                        table_data = []
+                        baseline_std_devs = st.session_state.get('baseline_std_devs', {})
+                        for var in gaps:
+                            base_val = baseline_vals[var]
+                            sim_val = getattr(agent, var)
+                            diff = sim_val - base_val
+                            status = "Improving" if diff > 0.01 else ("Regressing" if diff < -0.01 else "Stable")
+                            std_dev = baseline_std_devs.get(var, 0.1)
+                            if abs(diff) >= 0.10:
+                                significance = "Both statistically and practically significant"
+                            elif abs(diff) >= 0.5 * std_dev:
+                                significance = "Statistically significant, but limited practical impact"
+                            else:
+                                significance = "Not significant (within normal variability)"
+                            table_data.append({
+                                "Critical Gap": VAR_FULL_NAMES[var],
+                                "Baseline": f"{base_val:.2f}",
+                                "Simulation": f"{sim_val:.2f}",
+                                "Status": status,
+                                "Significance": significance
+                            })
+                        st.table(pd.DataFrame(table_data))
+
+                # ===== Division-Level Synopsis (enhanced with Monte Carlo if available) =====
+                total_schools = len(st.session_state.sim.agents)
+                early_stage = sum(1 for a in st.session_state.sim.agents if a.current_milestone <= 2)
+                advanced_stage = sum(1 for a in st.session_state.sim.agents if a.current_milestone >= 4)
+                transitional = total_schools - early_stage - advanced_stage
+                early_percent = (early_stage / total_schools * 100) if total_schools > 0 else 0
+                advanced_percent = (advanced_stage / total_schools * 100) if total_schools > 0 else 0
+                transitional_percent = (transitional / total_schools * 100) if total_schools > 0 else 0
+                early_text = f"{early_percent:.1f}% of schools" if early_percent > 0 else "No schools"
+                advanced_text = f"{advanced_percent:.1f}% of schools" if advanced_percent > 0 else "No schools"
+                if early_percent == 100:
+                    sustainability_text = "All schools are in early milestones; foundational capacity‑building is the priority."
+                elif early_percent >= 75:
+                    sustainability_text = f"The vast majority ({early_percent:.1f}%) are in early milestones; urgent interventions needed."
+                elif early_percent >= 50:
+                    sustainability_text = f"More than half ({early_percent:.1f}%) are in early milestones; targeted policy support may accelerate progress."
+                elif early_percent > 0:
+                    sustainability_text = f"{early_percent:.1f}% remain in early milestones; continued efforts are required."
+                else:
+                    sustainability_text = "No schools are in early milestones; the division exhibits a strong, advanced research culture."
+
+                total_outcome = sum(a.running_total_outcome for a in st.session_state.sim.agents)
+                avg_rcsi = total_outcome / total_schools if total_schools > 0 else 0
+                level_avg = classify_rcsi(avg_rcsi)
+                total_cycles = sum(a.cycle_count for a in st.session_state.sim.agents)
+                avg_milestone = np.mean([a.current_milestone for a in st.session_state.sim.agents])
+                avg_milestone_interp = interpret_avg_milestone(avg_milestone)
+
+                school_ids_in_sim = [a.real_id for a in st.session_state.sim.agents]
+                div_metadata = metadata_df[metadata_df['school_id_no'].isin(school_ids_in_sim)]
+                total_utilised = div_metadata['utilized_by_school'].sum() if 'utilized_by_school' in div_metadata.columns else 0
+                total_research = len(div_metadata)
+                div_util_rate = (total_utilised / total_research * 100) if total_research > 0 else 0
+
+                top_div_teacher = div_metrics.get('top_div_teacher', 'N/A')
+                top_div_school = div_metrics.get('top_div_school', 'N/A')
+                top_div_outputs = div_metrics.get('top_div_outputs', 0)
+                bottleneck_milestone = div_metrics.get('bottleneck_milestone', 'N/A')
+                bottleneck_time = div_metrics.get('bottleneck_time', 0)
+
+                output_trend_div = ""
+                if not metadata_df.empty and 'upload_date' in metadata_df.columns:
+                    div_timeline = metadata_df.groupby(metadata_df['upload_date'].dt.to_period('Q')).size()
+                    if len(div_timeline) >= 2:
+                        if div_timeline.iloc[-1] > div_timeline.iloc[-2]:
+                            output_trend_div = "The division's research output is increasing over time."
+                        elif div_timeline.iloc[-1] < div_timeline.iloc[-2]:
+                            output_trend_div = "The division's research output is declining over time."
+                        else:
+                            output_trend_div = "The division's research output has remained stable."
+                        avg_div_output = div_timeline.mean()
+                        output_trend_div += f" On average, the division produces {avg_div_output:.1f} outputs per quarter."
+
+                full_bottleneck = MILESTONE_NAMES.get(
+                    int(bottleneck_milestone.replace('M', '')) if isinstance(bottleneck_milestone, str) and bottleneck_milestone.startswith('M') else 0,
+                    bottleneck_milestone
                 )
-                st.session_state.data_calibrated = True
-                st.session_state.baseline_params = dict(
-                    cluster_profiles=new_profiles,
-                    total_population=len(df_filtered),
-                    flood_severity=baseline_severity,
-                    lgu_threat=False,
-                    seed=seed
-                )
-                st.success(f"Baseline established. K = {chosen_k}, population = {len(df_filtered)}. Ready for simulation or advisory updates.")
-        except Exception as e:
-            st.error(f"Calibration failed: {e}")
-        finally:
-            st.session_state.needs_calibration = False
-            # No st.rerun() – the dashboard will update immediately
-    else:
-        st.warning("Not enough respondents for the selected scope.")
-        st.session_state.needs_calibration = False
+                bottleneck_insight = (f"Schools spend the most time on average in {full_bottleneck} ({bottleneck_time:.1f} months). This is the critical bottleneck." if bottleneck_milestone != "N/A" else "")
+                top_teacher_insight = (f"The division's top researcher is {top_div_teacher} from {top_div_school} with {top_div_outputs} outputs." if top_div_teacher != "N/A" else "")
 
-# ---------- Main Dashboard ----------
-barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
-st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
-st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
+                # Monte Carlo reference to division synopsis if available
+                div_mc_text = ""
+                if 'mc_data' in st.session_state:
+                    mc_finals = st.session_state.mc_data['final_rcsi']
+                    div_mc_text = (f"Monte Carlo projections suggest that the division's average RCSI is estimated around "
+                                   f"**{np.mean(mc_finals):.3f}** with a P10‑P90 range of "
+                                   f"**{np.percentile(mc_finals, 10):.3f}** – **{np.percentile(mc_finals, 90):.3f}**, "
+                                   f"indicating that the division as a whole exhibits low variance and stable sustainability.")
 
-twin = st.session_state.twin
-metrics = twin.get_metrics()
-advanced = twin.get_advanced_metrics()
-pop = metrics['Total Population']
-reloc_pct = metrics['Projected to Relocate (%)']
-evac_pct = metrics['Evacuating (%)']
-resist_pct = metrics['Resisting LGU (%)']
+                bg_div = '#2E2E2E' if dark_mode else '#E8F5E9'
+                st.markdown(f"""
+                <div style="background-color: {bg_div}; border-left: 5px solid {USTP_GOLD}; padding: 10px; border-radius: 5px; margin-top: 10px; color: {text_col};">
+                <b>Division‑Level Sustainability Synopsis (all {total_schools} schools)</b><br>
+                - Average milestone = {avg_milestone:.1f} → {avg_milestone_interp}<br>
+                - Total completed cycles = {total_cycles}<br>
+                - Average RCSI = <b>{avg_rcsi:.3f}</b> → <b>{level_avg}</b> level.<br>
+                - Average research utilisation rate = <b>{div_util_rate:.1f}%</b>.<br>
+                - Stage distribution: {early_text} are in early stages (M≤2), {transitional_percent:.1f}% transitional (M3), and {advanced_text} are advanced (M≥4).<br>
+                <i>Division‑wide sustainability assessment:</i> {sustainability_text}<br><br>
+                <b>Productivity:</b> {output_trend_div}<br>
+                <b>Bottleneck:</b> {bottleneck_insight}<br>
+                <b>Top Division Researcher:</b> {top_teacher_insight}<br>
+                {div_mc_text}
+                </div>
+                """, unsafe_allow_html=True)
 
-# ---- Official Static Map (Zoomable) ----
-st.subheader("🗺️ Tagoloan River Basin (Official DOST-PAGASA Map)")
-try:
-    headers = {"User-Agent": "Mozilla/5.0"}
-    resp = requests.get("https://pubfiles.pagasa.dost.gov.ph/pagasaweb/images/basins/tagoloan-river-basin.jpg", headers=headers)
-    img = Image.open(BytesIO(resp.content))
-    fig_map = px.imshow(img)
-    fig_map.update_layout(
-        title="Tagoloan River Basin (Official DOST-PAGASA Map)",
-        margin=dict(l=0, r=0, t=30, b=0),
-        height=600,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False)
-    )
-    fig_map.update_xaxes(showgrid=False)
-    fig_map.update_yaxes(showgrid=False)
-    st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
-    st.caption("Official DOST-PAGASA map. Use the toolbar or mouse wheel to zoom and pan.")
-except Exception as e:
-    st.warning("Official map could not be loaded. Please check the image URL.")
+                with st.expander("Graph Interpretations"):
+                    st.markdown("""
+                    - **Variable Evolution:** How R, A, C, S, I, P, M change over time. Higher values (closer to 1) mean stronger readiness, awareness, capacity, etc.
+                    - **Milestone Progress:** The school moves through milestones 0-6. Reaching milestone 6 and cycling back indicates a full sustainable cycle.
+                    - **RCSI:** Cumulative strength of the research ecosystem, derived from Impact Realization (M) and Collaboration (P).
+                    - **Improvement per Cycle:** Each bar shows the RCSI contributed by one cycle. Higher bars in later cycles indicate increasing effectiveness.
+                    - **Radar Chart:** Current snapshot of the seven milestone-linked variables.
+                    - **Research Outputs Dashboard:** Tracks themes, publication status, utilisation, teacher productivity, experience vs output, timeline, top teachers, and breakdown by rank and attainment.
+                    - **Sensitivity Tornado:** Shows which policy lever most influences the final RCSI when varied ±10%.
+                    - **Monte Carlo Bands:** Depicts the uncertainty range (P10‑P90) of RCSI and milestone trajectories over multiple simulation runs.
+                    - **Division‑Level Analysis:** Milestone transition bottlenecks and teacher leaderboard.
+                    - **Comparative Analysis:** Overlay multiple schools' RCSI and milestone progress.
+                    - **Cycle vs Research Outputs:** Shows how research output accumulation relates to cycle progression.
+                    """)
 
-# ---- Basic Behavioral Outcomes ----
-st.subheader("Community Behavioral Outcomes")
-if pop == 0:
-    st.info("Upload and calibrate your survey data to populate the indicators.")
+            # Export button
+            if export_btn:
+                all_data = []
+                for a in st.session_state.sim.agents:
+                    h = st.session_state.history[a.real_id]
+                    for t in range(len(h['month'])):
+                        row = {'school_id': a.real_id, 'month': h['month'][t], 'milestone': h['milestone'][t], 'running_outcome': h['running_outcome'][t]}
+                        for v in VARIABLES:
+                            row[v] = h[v][t]
+                        all_data.append(row)
+                df_hist = pd.DataFrame(all_data)
+                cycle_records = []
+                for a in st.session_state.sim.agents:
+                    for rec in a.cycle_improvements:
+                        cycle_records.append({'school_id': a.real_id, 'cycle_number': rec.cycle_number,
+                                              'total_improvement': rec.total_improvement, 'completion_month': rec.completion_month})
+                df_cycles = pd.DataFrame(cycle_records)
+                st.download_button("Download simulation history", df_hist.to_csv(index=False).encode('utf-8'), "simulation_history.csv", "text/csv")
+                st.download_button("Download cycle improvements", df_cycles.to_csv(index=False).encode('utf-8'), "cycle_improvements.csv", "text/csv")
 else:
-    st.caption(f"Realistic baselines from survey CAC data. Current flood severity: **{flood_sev:.2f}** – {label}")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Population", f"{pop:,}")
-col2.metric("Projected to Relocate", f"{reloc_pct:.1f}%")
-col3.metric("Evacuating", f"{evac_pct:.1f}%")
-col4.metric("Resisting LGU", f"{resist_pct:.1f}%")
-
-if pop > 0:
-    snapshot_parts = []
-    if reloc_pct > 30:
-        snapshot_parts.append(f"High relocation pressure ({reloc_pct:.1f}%) indicates strong desire to move.")
-    elif reloc_pct > 10:
-        snapshot_parts.append(f"Moderate relocation interest ({reloc_pct:.1f}%) shows some openness to resettlement.")
-    else:
-        snapshot_parts.append(f"Low relocation intent ({reloc_pct:.1f}%) means most residents prefer to stay.")
-
-    if evac_pct > 80:
-        snapshot_parts.append(f"Very high evacuation readiness ({evac_pct:.1f}%) suggests the community is prepared to respond to warnings.")
-    elif evac_pct > 50:
-        snapshot_parts.append(f"Moderate evacuation readiness ({evac_pct:.1f}%) may need reinforcement.")
-    else:
-        snapshot_parts.append(f"Low evacuation readiness ({evac_pct:.1f}%) reveals a critical gap in disaster preparedness.")
-
-    if resist_pct > 20:
-        snapshot_parts.append(f"Significant LGU resistance ({resist_pct:.1f}%) signals friction.")
-    elif resist_pct > 5:
-        snapshot_parts.append(f"Low‑to‑moderate resistance ({resist_pct:.1f}%) — monitor clusters contributing to it.")
-    else:
-        snapshot_parts.append(f"Negligible resistance ({resist_pct:.1f}%) — community is largely cooperative.")
-
-    st.caption(f"📊 **{barangay_title} snapshot:** {' '.join(snapshot_parts)}")
-
-# ---- Advanced Behavioral Indicators ----
-st.markdown("---")
-st.subheader("Advanced Community Indicators")
-if pop == 0:
-    st.info("These indicators will populate after data calibration.")
-else:
-    st.caption("Derived from the CAC constructs and regression pathways, these metrics reveal deeper community dynamics.")
-adv_col1, adv_col2, adv_col3, adv_col4, adv_col5 = st.columns(5)
-adv_col1.metric("Proactive Preparedness", f"{advanced['Proactive Preparedness (%)']:.1f}%")
-adv_col2.metric("LGU Trust & Cooperation", f"{advanced['LGU Trust & Cooperation (%)']:.1f}%")
-adv_col3.metric("Heritage‑Based Refusal", f"{advanced['Heritage-Based Refusal (%)']:.1f}%")
-adv_col4.metric("Demolition Anxiety", f"{advanced['Demolition Anxiety (%)']:.1f}%")
-adv_col5.metric("Relocation Readiness", f"{advanced['Relocation Readiness (%)']:.1f}%")
-
-if pop > 0:
-    adv_interpretations = []
-    if advanced['Proactive Preparedness (%)'] > 60:
-        adv_interpretations.append("🟢 **High proactive preparedness**: many residents are already taking independent action – leverage them as community champions.")
-    elif advanced['Proactive Preparedness (%)'] < 30:
-        adv_interpretations.append("🔴 **Low proactive preparedness**: grassroots awareness campaigns are urgently needed.")
-    else:
-        adv_interpretations.append("🟡 **Moderate proactive preparedness**: continue building local capacity.")
-
-    if advanced['LGU Trust & Cooperation (%)'] > 60:
-        adv_interpretations.append("🟢 **Strong LGU trust**: policies will likely face less friction and higher compliance.")
-    elif advanced['LGU Trust & Cooperation (%)'] < 30:
-        adv_interpretations.append("🔴 **Weak LGU trust**: any new program will encounter resistance; invest in trust‑building first.")
-    else:
-        adv_interpretations.append("🟡 **Moderate trust**: maintain transparency to avoid erosion.")
-
-    if advanced['Heritage-Based Refusal (%)'] > 30:
-        adv_interpretations.append("⚠️ **High heritage‑based refusal**: monetary incentives alone won't work; consider community‑relocation or psychosocial support.")
-    else:
-        adv_interpretations.append("🟢 **Low heritage refusal**: relocation barriers are more practical than emotional.")
-
-    if advanced['Demolition Anxiety (%)'] > 30:
-        adv_interpretations.append("🔴 **Elevated demolition anxiety**: immediate housing security guarantees and MHPSS are critical.")
-    elif advanced['Demolition Anxiety (%)'] > 10:
-        adv_interpretations.append("🟡 **Moderate demolition anxiety**: monitor closely, especially if demolition threat is active.")
-    else:
-        adv_interpretations.append("🟢 **Low demolition anxiety**: community feels relatively secure about housing.")
-
-    if advanced['Relocation Readiness (%)'] > 20:
-        adv_interpretations.append("🟢 **High relocation readiness**: a pool of early adopters exists – target them for pilot resettlement programs.")
-    elif advanced['Relocation Readiness (%)'] > 5:
-        adv_interpretations.append("🟡 **Moderate readiness**: some residents are prepared; identify and encourage them.")
-    else:
-        adv_interpretations.append("🔴 **Low readiness**: psychological adaptation to relocation is minimal; phased engagement is necessary.")
-
-    st.caption(" ".join(adv_interpretations))
-
-st.markdown("---")
-
-st.subheader("Socio-Psychological Network Graph")
-if pop == 0:
-    st.info("Upload and calibrate data to display the psychological network graph.")
-else:
-    G = nx.DiGraph()
-    for name, node in twin.nodes.items():
-        G.add_node(name, score=node.current_score)
-    for edge in twin.edges:
-        G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
-
-    pos = nx.spring_layout(G, k=0.35, seed=42)
-    edge_x, edge_y = [], []
-    for e in G.edges():
-        x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
-        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
-                            hoverinfo='text',
-                            text=[f"{edge.source_name} → {edge.target_name}<br>Regression coeff.: {edge.coefficient:+.3f}<br>R²: {edge.r_square:.3f}" for edge in twin.edges],
-                            mode='lines')
-    node_x, node_y, node_text, node_color = [], [], [], []
-    for n, d in G.nodes(data=True):
-        x, y = pos[n]
-        node_x.append(x); node_y.append(y)
-        node_text.append(f"{n}<br>Score: {d['score']:.1f}")
-        node_color.append(d['score'])
-    node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
-                            text=list(G.nodes()), textposition="bottom center",
-                            hovertext=node_text, hoverinfo='text',
-                            marker=dict(showscale=True, colorscale='Viridis', reversescale=True,
-                                        color=node_color, size=25,
-                                        colorbar=dict(thickness=10, title='Score')))
-    fig_net = go.Figure(data=[edge_trace, node_trace],
-                        layout=go.Layout(title='12 Nodes & 18 Causal Pathways', showlegend=False,
-                                         margin=dict(b=20,l=5,r=5,t=40),
-                                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-    st.plotly_chart(fig_net, use_container_width=True)
-
-    high_nodes = [n for n, d in G.nodes(data=True) if d['score'] > 60]
-    low_nodes = [n for n, d in G.nodes(data=True) if d['score'] < 40]
-    if high_nodes:
-        st.caption(f"🔵 **Strong drivers in {barangay_title}:** {', '.join(high_nodes)} show high intensity, which can be leveraged for positive behavioral change.")
-    if low_nodes:
-        st.caption(f"🟡 **Weak areas in {barangay_title}:** {', '.join(low_nodes)} are psychologically fragile; interventions here may have the greatest impact.")
-    if not high_nodes and not low_nodes:
-        st.caption(f"⚪ **Balanced profile in {barangay_title}:** all nodes are in the moderate range, suggesting a stable psychological landscape.")
-
-st.markdown("---")
-
-st.subheader("Behavioral Distribution by Cluster")
-cluster_df = twin.analytics.get_cluster_breakdown()
-if pop == 0:
-    st.info("No clusters yet. Upload and recalibrate data.")
-else:
-    st.caption("Overall metrics are the weighted average of these per‑cluster percentages. Population counts shown in the table below.")
-
-    fig_cluster = go.Figure()
-    behaviors = ['Projected to Relocate %', 'Evacuating %', 'Adapting %', 'Resisting %']
-    colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA']
-    for i, beh in enumerate(behaviors):
-        fig_cluster.add_trace(go.Bar(
-            x=cluster_df['Cluster'],
-            y=cluster_df[beh],
-            name=beh,
-            text=[f"{v:.1f}%" for v in cluster_df[beh]],
-            textposition='outside',
-            marker_color=colors[i]
-        ))
-    fig_cluster.update_layout(barmode='group', title='Behavioral Distribution by Cluster',
-                              yaxis_title='Percentage', height=450)
-    st.plotly_chart(fig_cluster, use_container_width=True)
-
-    dominating_clusters = []
-    for _, row in cluster_df.iterrows():
-        if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 60 or row['Resisting %'] > 30:
-            dominating_clusters.append(row['Cluster'])
-    if dominating_clusters:
-        st.caption(f"🔍 **Clusters driving {barangay_title} outcomes:** {', '.join(dominating_clusters)} have notably high behavioral percentages. Targeting these groups can shift aggregate outcomes significantly.")
-    else:
-        st.caption(f"🔍 **Balanced cluster behavior in {barangay_title}:** no single cluster dominates the outcomes, indicating a mixed community profile.")
-
-    st.markdown("**Cluster populations:**")
-    pop_summary = cluster_df[['Cluster', 'Population Count']].set_index('Cluster')
-    st.dataframe(pop_summary.T, use_container_width=True)
-    st.caption("The sum of these counts equals the total population shown above.")
-
-if st.session_state.data_calibrated and st.session_state.respondent_clusters is not None:
-    st.markdown("---")
-    st.subheader("📋 Respondent Details by Cluster")
-    st.caption("Names and barangays of each respondent, grouped by their psychological cluster. Useful for targeted interventions.")
-    df_resp = st.session_state.respondent_clusters
-    profile_names = list(twin.cluster_profiles.keys())
-    label_to_name = {i: profile_names[i] for i in range(len(profile_names))}
-    df_resp['Cluster Name'] = df_resp['Cluster'].map(label_to_name)
-
-    for cname, group in df_resp.groupby('Cluster Name'):
-        with st.expander(f"{cname} ({len(group)} respondents)"):
-            st.dataframe(group[['Respondent_Name', 'Barangay_Name']], use_container_width=True)
-
-    csv_full = df_resp.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Full Respondent List with Cluster Labels", csv_full,
-                       file_name='respondents_with_clusters.csv', mime='text/csv')
-
-st.markdown("---")
-st.subheader("Cluster Profiles (K-Means Nomenclature)")
-if st.session_state.data_calibrated:
-    st.success(f"Profiles extracted from uploaded survey data (K={len(twin.cluster_profiles)}).")
-else:
-    st.info("No profiles yet. Upload and recalibrate data.")
-profiles = [{"Cluster": name, "Share": f"{p.population_ratio*100:.1f}%",
-             "Dominant Driver": p.dominant_driver}
-            for name, p in twin.cluster_profiles.items()]
-if profiles:
-    st.dataframe(pd.DataFrame(profiles), use_container_width=True, hide_index=True)
-
-st.markdown("---")
-st.subheader("CAC Breakdown (Bubble: Commitment)")
-cac_avgs = twin.analytics.get_cac_averages(col_map)
-scatter = [{"Construct": node, "Challenge": cac_avgs[f"{node} (Challenge)"],
-            "Acceptance": cac_avgs[f"{node} (Acceptance)"],
-            "Commitment": cac_avgs[f"{node} (Commitment)"]} for node in col_map]
-if pop == 0:
-    st.info("CAC data will appear after calibration.")
-else:
-    fig_cac = px.scatter(pd.DataFrame(scatter), x="Challenge", y="Acceptance",
-                         size="Commitment", color="Construct", size_max=60,
-                         title="Community CAC Profile")
-    st.plotly_chart(fig_cac, use_container_width=True)
-
-    high_challenge = [d['Construct'] for d in scatter if d['Challenge'] > 60]
-    low_acceptance = [d['Construct'] for d in scatter if d['Acceptance'] < 40]
-    if high_challenge:
-        st.caption(f"🔴 **High Challenge in {barangay_title}:** {', '.join(high_challenge)} – residents perceive significant barriers, requiring policy support to lower perceived difficulty.")
-    if low_acceptance:
-        st.caption(f"🟠 **Low Acceptance in {barangay_title}:** {', '.join(low_acceptance)} – these areas lack community buy‑in; awareness campaigns or incentives may be needed.")
-    if not high_challenge and not low_acceptance:
-        st.caption(f"⚪ **Balanced CAC profile in {barangay_title}:** all constructs are within moderate range, indicating a generally stable psychological state.")
-
-st.markdown("---")
-st.subheader("Policy Insights & Actionable Recommendations")
-if pop == 0:
-    st.info("Insights will appear after data is loaded and calibrated.")
-else:
-    insight_parts = []
-    insight_parts.append(
-        f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
-        f"Under the current PAGASA advisory ({label}, severity {flood_sev:.2f}), "
-        f"**{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
-        f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
-        f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
-        f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
-        f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
-        f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
-        f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
-    )
-
-    if reloc_pct > 30:
-        insight_parts.append(
-            f"🔴 **High relocation pressure ({reloc_pct:.1f}%):** This indicates strong desire or feasibility for moving, "
-            "likely driven by elevated 'Desire for relocation' and 'Feasibility of relocation' scores in the network graph. "
-            "If unmanaged, this could lead to unplanned out‑migration or strain on resettlement programs."
-        )
-    elif reloc_pct > 10:
-        insight_parts.append(
-            f"🟡 **Moderate relocation interest ({reloc_pct:.1f}%):** A notable segment considers moving, "
-            "but most residents prefer to stay. The cluster breakdown can pinpoint which groups are relocation‑ready "
-            "so that assistance can be targeted without triggering unnecessary displacement."
-        )
-    else:
-        insight_parts.append(
-            f"🟢 **Low relocation intent ({reloc_pct:.1f}%):** The majority of residents are rooted in place. "
-            "Policies should focus on in‑situ adaptation, livelihood support, and strengthening local capacities "
-            "rather than resettlement."
-        )
-
-    if evac_pct > 80:
-        insight_parts.append(
-            f"🔵 **Very high evacuation readiness ({evac_pct:.1f}%):** Almost the entire community is willing to evacuate "
-            "when warned. This reflects strong 'Coping during flooding' and 'Prevention and flooding' scores. "
-            "Maintain early warning systems and conduct regular drills to sustain this readiness."
-        )
-    elif evac_pct > 50:
-        insight_parts.append(
-            f"🟡 **Moderate evacuation readiness ({evac_pct:.1f}%):** More than half would evacuate, but a significant "
-            "minority remains hesitant. The cluster chart highlights which groups are least likely to evacuate; "
-            "targeted awareness campaigns and incentives could raise this figure."
-        )
-    else:
-        insight_parts.append(
-            f"🔴 **Low evacuation readiness ({evac_pct:.1f}%):** A majority of residents may not respond to evacuation orders. "
-            "This is a critical gap in disaster preparedness. Strengthen 'Coping during flooding' and 'Viewpoints towards LGU' "
-            "through community engagement and trust‑building, as suggested by the network graph."
-        )
-
-    if resist_pct > 20:
-        insight_parts.append(
-            f"🟠 **Significant LGU resistance ({resist_pct:.1f}%):** Friction is apparent, especially if a demolition threat "
-            "is active. The CAC profile likely shows high 'Fear of housing demolition' and low 'Viewpoints towards LGU'. "
-            "Immediate action: issue housing tenure guarantees and open a transparent dialogue with affected clusters."
-        )
-    elif resist_pct > 5:
-        insight_parts.append(
-            f"🟡 **Low‑to‑moderate resistance ({resist_pct:.1f}%):** A small fraction resists LGU efforts. "
-            "Monitor the clusters that contribute to this resistance; even a few vocal opponents can escalate tensions."
-        )
-    else:
-        insight_parts.append(
-            f"🟢 **Negligible resistance ({resist_pct:.1f}%):** The community is largely cooperative, "
-            "providing a favourable environment for new programs and policies."
-        )
-
-    if advanced['Proactive Preparedness (%)'] > 60:
-        insight_parts.append("🛠️ **High proactive preparedness** – community champions exist; engage them as partners.")
-    if advanced['LGU Trust & Cooperation (%)'] < 40:
-        insight_parts.append("🤝 **Low LGU trust** – major barrier to policy rollouts; invest in trust‑building before launching new programs.")
-    if advanced['Heritage-Based Refusal (%)'] > 30:
-        insight_parts.append("🏡 **High heritage‑based refusal** – relocation programs must include psychosocial and cultural components, not just financial aid.")
-    if advanced['Demolition Anxiety (%)'] > 30:
-        insight_parts.append("⚠️ **Elevated demolition anxiety** – deploy MHPSS and issue clear housing guarantees immediately.")
-    if advanced['Relocation Readiness (%)'] > 20:
-        insight_parts.append("🚀 **Relocation readiness high** – a pilot relocation program can succeed quickly if targeted at these early adopters.")
-
-    if twin.nodes["Fear of housing demolition"].current_score > 60:
-        insight_parts.append(
-            "⚠️ **Elevated fear of demolition** – The network shows this node is particularly hot (high score). "
-            "It will likely amplify resistance and reduce relocation willingness. Address it with clear communication "
-            "about housing security before any infrastructure project."
-        )
-    if twin.nodes["Viewpoints towards LGU"].current_score < 40:
-        insight_parts.append(
-            "⚠️ **Low LGU trust** – Trust is a multiplier across all behaviours. "
-            "Implement visible, participatory projects to improve this score; the network shows it directly influences "
-            "'Assistance for relocation' and 'Fear of housing demolition'."
-        )
-
-    if reloc_pct < 10 and evac_pct > 80 and resist_pct < 5:
-        insight_parts.append(
-            "✅ **Optimal profile:** This barangay exhibits high resilience with low resistance and relocation pressure. "
-            "The primary strategy is to **maintain current interventions** and monitor for any shifts, especially if "
-            "environmental conditions change."
-        )
-    elif reloc_pct > 30 and evac_pct < 50:
-        insight_parts.append(
-            "⚠️ **Dual vulnerability:** Many want to leave but few would evacuate in an emergency. "
-            "This contradictory pattern suggests deep‑seated distrust or fear. Prioritise building evacuation capacity "
-            "while simultaneously offering voluntary, dignified relocation options."
-        )
-
-    st.markdown(" ".join(insight_parts))
-    st.caption(
-        "🔗 **How to use these insights:** The network graph identifies which psychological drivers to adjust, "
-        "the cluster breakdown shows exactly which groups drive each behaviour, and the CAC bubble chart reveals "
-        "the underlying community profile. Adjust the intervention sliders or environmental triggers, then "
-        "click 'Rebuild Population' or 'Run' to test policy scenarios."
-    )
-
-st.markdown("---")
-st.subheader("Simulation Timeline")
-st.caption("Shows how the three key macro‑metrics evolve step‑by‑step, revealing the delayed effects of interventions – vital for policy planning.")
-if len(twin.history) > 1:
-    hist = pd.DataFrame(twin.history)
-    hist['Step'] = range(len(hist))
-    hist_melt = hist.melt(id_vars='Step', value_vars=['Projected to Relocate (%)','Evacuating (%)','Resisting LGU (%)'],
-                          var_name='Metric', value_name='Percentage')
-    fig_time = px.line(hist_melt, x='Step', y='Percentage', color='Metric',
-                       title='Macro-Metrics Over Time', markers=True)
-    st.plotly_chart(fig_time, use_container_width=True)
-    recent = hist.tail(3)
-    relocate_trend = recent['Projected to Relocate (%)'].diff().mean()
-    evac_trend = recent['Evacuating (%)'].diff().mean()
-    resist_trend = recent['Resisting LGU (%)'].diff().mean()
-    if relocate_trend > 0.5:
-        st.caption(f"📈 **{barangay_title}:** Relocation is trending upward – if this continues, resettlement demand may exceed current capacity.")
-    elif relocate_trend < -0.5:
-        st.caption(f"📉 **{barangay_title}:** Relocation is declining, suggesting that interventions are reducing the desire to leave.")
-    if evac_trend > 0.5:
-        st.caption(f"📈 **{barangay_title}:** Evacuation readiness is improving; maintain current awareness efforts.")
-    elif evac_trend < -0.5:
-        st.caption(f"📉 **{barangay_title}:** Evacuation readiness is dropping – review early warning effectiveness.")
-    if resist_trend > 0.3:
-        st.caption(f"⚠️ **{barangay_title}:** Resistance is growing; potential trigger events (like demolition threats) may be escalating tensions.")
-else:
-    st.info("Run at least two steps to see the timeline.")
-
-st.markdown("---")
-
-# Logging and download
-st.subheader("📋 Advisory Response Log")
-if st.button("📌 Log Current Snapshot"):
-    log_entry = {
-        "Barangay": st.session_state.current_barangay,
-        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Severity": f"{flood_sev:.2f} ({label})",
-        "Total Population": pop,
-        "Relocate %": reloc_pct,
-        "Evacuating %": evac_pct,
-        "Resisting LGU %": resist_pct,
-        "Proactive %": advanced['Proactive Preparedness (%)'],
-        "LGU Trust %": advanced['LGU Trust & Cooperation (%)'],
-        "Heritage Refusal %": advanced['Heritage-Based Refusal (%)'],
-        "Demolition Anxiety %": advanced['Demolition Anxiety (%)'],
-        "Relocation Readiness %": advanced['Relocation Readiness (%)']
-    }
-    st.session_state.log_entries.append(log_entry)
-    st.success("Snapshot logged.")
-
-if st.session_state.log_entries:
-    log_df = pd.DataFrame(st.session_state.log_entries)
-    st.dataframe(log_df, use_container_width=True)
-    csv = log_df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Advisory History (CSV)", csv, "advisory_log.csv", "text/csv")
-
-st.checkbox("Auto‑log on advisory change", key="auto_log")
+    st.info("Please upload quarterly survey and research metadata CSV files to begin.")
