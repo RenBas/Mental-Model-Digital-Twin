@@ -243,27 +243,32 @@ class CommunityAnalytics:
                 "Demolition Anxiety (%)": 0.0,
                 "Relocation Readiness (%)": 0.0
             }
+        # Proactive Preparedness (unchanged)
         proactive = self.df[
             (self.df["Prevention and flooding"] > 60) & 
             (self.df["Coping during flooding"] > 60)
         ].shape[0]
         proactive_pct = (proactive / self.total_population) * 100
 
+        # LGU Trust & Cooperation (lowered Assistance threshold to 30)
         trust_coop = self.df[
             (self.df["Viewpoints towards LGU"] > 50) & 
-            (self.df["Assistance for relocation"] > 50)
+            (self.df["Assistance for relocation"] > 30)
         ].shape[0]
         trust_pct = (trust_coop / self.total_population) * 100
 
+        # Heritage-Based Refusal (lowered Family history threshold to 48)
         heritage_refusal = self.df[
             (self.df["Has_Relocated"] == False) & 
-            (self.df["Family history and identity"] > 70)
+            (self.df["Family history and identity"] > 48)
         ].shape[0]
         heritage_pct = (heritage_refusal / self.total_population) * 100
 
-        anxiety = self.df[self.df["Fear of housing demolition"] > 70].shape[0]
+        # Demolition Anxiety (lowered Fear threshold to 50)
+        anxiety = self.df[self.df["Fear of housing demolition"] > 50].shape[0]
         anxiety_pct = (anxiety / self.total_population) * 100
 
+        # Relocation Readiness (unchanged)
         ready = self.df[
             (self.df["Has_Relocated"] == True) & 
             (self.df["Preference and adaptation"] > 60)
@@ -1024,7 +1029,9 @@ else:
         x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
         edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
     edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
-                            hoverinfo='none', mode='lines')
+                            hoverinfo='text',
+                            text=[f"{edge.source_name} → {edge.target_name}<br>Regression coeff.: {edge.coefficient:+.3f}<br>R²: {edge.r_square:.3f}" for edge in twin.edges],
+                            mode='lines')
     node_x, node_y, node_text, node_color = [], [], [], []
     for n, d in G.nodes(data=True):
         x, y = pos[n]
@@ -1080,7 +1087,7 @@ else:
 
     dominating_clusters = []
     for _, row in cluster_df.iterrows():
-        if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 80 or row['Resisting %'] > 30:
+        if row['Projected to Relocate %'] > 50 or row['Evacuating %'] > 60 or row['Resisting %'] > 30:
             dominating_clusters.append(row['Cluster'])
     if dominating_clusters:
         st.caption(f"🔍 **Clusters driving {barangay_title} outcomes:** {', '.join(dominating_clusters)} have notably high behavioral percentages. Targeting these groups can shift aggregate outcomes significantly.")
