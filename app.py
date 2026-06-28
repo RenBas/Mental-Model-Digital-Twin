@@ -912,7 +912,7 @@ try:
     )
     fig_map.update_xaxes(showgrid=False)
     fig_map.update_yaxes(showgrid=False)
-    st.plotly_chart(fig_map, use_container_width=True)
+    st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
     st.caption("Official DOST-PAGASA map. Use the toolbar to zoom and pan.")
 except Exception as e:
     st.warning("Official map could not be loaded. Please check the image URL.")
