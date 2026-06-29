@@ -169,6 +169,11 @@ with st.sidebar:
     st.markdown("---")
     st.header("🎛️ Simulation Controls")
     steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
+    st.caption(
+        "Each step advances the system dynamics and re‑evaluates agent decisions, "
+        "simulating the gradual diffusion of psychological changes through the community. "
+        "More steps = longer simulated time."
+    )
     run_disabled = (st.session_state.twin.total_population == 0)
     if st.button("▶️ Run", use_container_width=True, type="primary", disabled=run_disabled):
         for _ in range(steps_to_run):
