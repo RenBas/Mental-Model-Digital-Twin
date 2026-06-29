@@ -5,12 +5,6 @@ import pandas as pd
 from engine.analytics import CommunityAnalytics
 
 def run_sensitivity(twin, param_type, chosen_construct, component, start_val, end_val, n_steps):
-    """
-    Fast parameter sweep – temporarily adjust one parameter, re‑evaluate decisions,
-    and record behavioural/advanced metrics. The twin is left in the state of the
-    LAST parameter value (so the dashboard reflects the scenario).
-    Returns: (DataFrame, dict of baseline scores, dict of final node scores)
-    """
     if param_type not in ("Flood Severity", "CAC Construct"):
         raise ValueError(f"Unknown param_type: {param_type}")
     if param_type == "CAC Construct":
@@ -21,9 +15,7 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
         if chosen_construct not in twin.nodes:
             raise ValueError(f"Construct not found: {chosen_construct}")
 
-    # --- Save baseline node scores BEFORE the sweep (for network impact view) ---
     baseline_scores = {name: node.current_score for name, node in twin.nodes.items()}
-    # Save original agent states for the CAC construct (needed if we need to restore, but we don't)
     if param_type == "CAC Construct":
         orig_agent_states = [agent.node_states.get(chosen_construct, 50.0) for agent in twin.agents]
 
@@ -65,8 +57,5 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
             'Relocation Readiness %': advanced['Relocation Readiness (%)']
         })
 
-    # Capture final node scores after the last step
     final_node_scores = {name: node.current_score for name, node in twin.nodes.items()}
-
-    # Return DataFrame and baseline/final scores for network impact view
     return pd.DataFrame(results), baseline_scores, final_node_scores
