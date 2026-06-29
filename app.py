@@ -564,9 +564,11 @@ st.subheader("Policy Insights & Actionable Recommendations")
 if pop == 0:
     st.info("Insights will appear after data is loaded and calibrated.")
 else:
-    render_policy_insights(twin, metrics, advanced, flood_sev, pagasa_label, barangay_title)
-    if st.session_state.sensitivity_active:
-        st.caption("🔬 *These insights reflect the sensitivity scenario currently active.*")
+    render_policy_insights(
+        twin, metrics, advanced, flood_sev, pagasa_label, barangay_title,
+        sensitivity_active=st.session_state.sensitivity_active,
+        sensitivity_param=st.session_state.get('sensitivity_param', '')
+    )
 
 # ---- Sensitivity Results ----
 if st.session_state.sensitivity_results is not None:
