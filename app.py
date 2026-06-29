@@ -21,7 +21,6 @@ from ui.insights import render_policy_insights
 
 st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
 
-# ---------- Dark mode ----------
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -47,7 +46,6 @@ def apply_dark_mode():
 
 apply_dark_mode()
 
-# ---------- Session state ----------
 if 'twin' not in st.session_state:
     nodes, edges = build_base_nodes_and_edges()
     st.session_state.twin = DigitalTwin(
@@ -61,8 +59,7 @@ defaults = {
     'current_barangay': "All Barangays", 'raw_data': None,
     'disable_flashing': False, 'use_pagasa_auto': True,
     'pagasa_severity': None, 'prev_pagasa_severity': None,
-    'baseline_params': None, 'log_entries': [], 'auto_log': True,
-    'prev_k_mode': "Auto (silhouette)", 'dark_mode': False,
+    'baseline_params': None,
     'sensitivity_results': None, 'sensitivity_param': "",
     'sensitivity_active': False,
     'baseline_node_scores': None,
@@ -150,7 +147,6 @@ with st.sidebar:
                     profiles, chosen_k, labeled_df = run_calibration(df_filtered, k_mode, manual_k)
                     data_hash = hashlib.md5(df_filtered.to_csv(index=False).encode()).hexdigest()
                     seed = int(data_hash, 16) % (2**32)
-
                     baseline_severity = st.session_state.twin.flood_severity
 
                     nodes, edges = build_base_nodes_and_edges()
@@ -165,7 +161,8 @@ with st.sidebar:
                         cluster_profiles=profiles, total_population=len(df_filtered),
                         flood_severity=baseline_severity, lgu_threat=False, seed=seed
                     )
-                    st.success(f"Baseline established. K = {chosen_k}, population = {len(df_filtered)}. Ready for simulation or advisory updates.")
+                    st.session_state.sensitivity_active = False
+                    st.success(f"Baseline established. K = {chosen_k}, population = {len(df_filtered)}. Ready for scenario exploration.")
                     st.rerun()
     else:
         st.info("📝 Upload a 38‑column CSV to begin.")
@@ -190,14 +187,18 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.header("⚙️ Settings")
+    st.subheader("📏 Projected Population Size")
     pop_disabled = (len(st.session_state.twin.cluster_profiles) == 0)
-    new_pop = st.slider("Total Residents to Simulate", 10, 5000, st.session_state.twin.total_population,
-                        key="pop_slider", disabled=pop_disabled,
-                        help="Changing this value immediately regenerates the population.")
+    new_pop = st.slider(
+        "Projected Population Size",
+        10, 5000, st.session_state.twin.total_population,
+        key="pop_slider", disabled=pop_disabled,
+        help="Applies the current cluster proportions to a different total number of residents."
+    )
+    st.caption("ℹ️ *“If our barangay has 5 000 residents (instead of the 600 sampled), what would the behavioural metrics look like under the same psychological profile?”*")
     if not pop_disabled and new_pop != st.session_state.twin.total_population:
         st.session_state.twin.update_population_size(new_pop)
-        st.warning(f"Population updated to {new_pop}. Simulation reset, history cleared.")
+        st.warning(f"Population scaled to {new_pop}. Metrics recalculated.")
         st.rerun()
 
     # PAGASA Advisory section
@@ -208,30 +209,6 @@ with st.sidebar:
 
     if st.session_state.use_pagasa_auto and pagasa_severity is not None:
         st.session_state.twin.flood_severity = pagasa_severity
-
-    # Auto‑logging
-    if st.session_state.auto_log and pagasa_severity is not None:
-        if st.session_state.prev_pagasa_severity is None:
-            st.session_state.prev_pagasa_severity = pagasa_severity
-        elif pagasa_severity != st.session_state.prev_pagasa_severity:
-            metrics = st.session_state.twin.get_metrics()
-            advanced = st.session_state.twin.get_advanced_metrics()
-            log_entry = {
-                "Barangay": st.session_state.current_barangay,
-                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Severity": f"{pagasa_severity:.2f} ({pagasa_label})",
-                "Total Population": metrics['Total Population'],
-                "Relocate %": metrics['Projected to Relocate (%)'],
-                "Evacuating %": metrics['Evacuating (%)'],
-                "Resisting LGU %": metrics['Resisting LGU (%)'],
-                "Proactive %": advanced['Proactive Preparedness (%)'],
-                "LGU Trust %": advanced['LGU Trust & Cooperation (%)'],
-                "Heritage Refusal %": advanced['Heritage-Based Refusal (%)'],
-                "Demolition Anxiety %": advanced['Demolition Anxiety (%)'],
-                "Relocation Readiness %": advanced['Relocation Readiness (%)']
-            }
-            st.session_state.log_entries.append(log_entry)
-            st.session_state.prev_pagasa_severity = pagasa_severity
 
     if st.button("🔄 Refresh Live Advisory"):
         fetch_pagasa_advisory.clear()
@@ -257,7 +234,6 @@ with st.sidebar:
             st.session_state.twin.reset(new_flood_severity=flood_sev, new_lgu_threat=lgu_threat)
             st.rerun()
 
-    # Inactive Water‑Level Gauge
     st.markdown("---")
     st.subheader("🌊 Tagoloan River Water Level")
     render_waterlevel_gauge()
@@ -322,7 +298,6 @@ barangay_title = st.session_state.current_barangay if st.session_state.current_b
 st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
 st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 
-# Sensitivity scenario banner
 if st.session_state.sensitivity_active:
     st.info("🔬 **Sensitivity Scenario Active** – The dashboard below reflects the selected sensitivity parameters. Click 'Restore Baseline' to return to the original calibrated state.")
 
@@ -351,7 +326,7 @@ try:
     fig_map.update_xaxes(showgrid=False)
     fig_map.update_yaxes(showgrid=False)
     st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
-    st.caption("Official DOST-PAGASA map. Use the toolbar or mouse wheel to zoom and pan.")
+    st.caption("Official DOST-PAGASA map. Drag to pan, scroll to zoom.")
     if st.button("📥 Download Map (interactive HTML)"):
         html_str = fig_map.to_html(include_plotlyjs='cdn')
         st.download_button("Save map.html", html_str, "tagoloan_river_basin.html", "text/html")
@@ -438,13 +413,62 @@ if pop > 0:
         adv_interpretations.append("🔴 **Low readiness**: psychological adaptation to relocation is minimal; phased engagement is necessary.")
     st.caption(" ".join(adv_interpretations))
 
-# ---- Network Graph ----
+# ---- Side‑by‑Side Network Graphs ----
 st.markdown("---")
-st.subheader("Socio-Psychological Network Graph")
+st.subheader("Socio‑Psychological Network")
 if pop == 0:
     st.info("Upload and calibrate data to display the psychological network graph.")
 else:
-    render_network_graph(twin, barangay_title)
+    col_left, col_right = st.columns(2)
+    with col_left:
+        if st.session_state.sensitivity_active and st.session_state.baseline_node_scores is not None:
+            render_network_graph(twin, barangay_title, node_scores=st.session_state.baseline_node_scores)
+            st.caption("Baseline psychological landscape (unchanged during sensitivity analysis).")
+        else:
+            render_network_graph(twin, barangay_title)
+            st.caption("Current psychological landscape.")
+    with col_right:
+        if st.session_state.sensitivity_active and st.session_state.baseline_node_scores is not None and st.session_state.final_node_scores is not None:
+            # Build the impact graph (already done below in sensitivity results, but we show a summary here)
+            baseline = st.session_state.baseline_node_scores
+            final = st.session_state.final_node_scores
+            node_names = list(baseline.keys())
+            changes = [final[n] - baseline[n] for n in node_names]
+
+            G_impact = nx.DiGraph()
+            for name in node_names:
+                G_impact.add_node(name, change=changes[node_names.index(name)])
+            for edge in twin.edges:
+                G_impact.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
+
+            pos = nx.spring_layout(G_impact, k=0.35, seed=42)
+            edge_x, edge_y = [], []
+            for e in G_impact.edges():
+                x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
+                edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+            edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
+                                    hoverinfo='none', mode='lines')
+            node_x, node_y, node_text, node_color = [], [], [], []
+            for n, d in G_impact.nodes(data=True):
+                x, y = pos[n]
+                node_x.append(x); node_y.append(y)
+                node_text.append(f"{n}<br>Change: {d['change']:+.1f}")
+                node_color.append(d['change'])
+            node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                                    text=list(G_impact.nodes()), textposition="bottom center",
+                                    hovertext=node_text, hoverinfo='text',
+                                    marker=dict(showscale=True, colorscale='RdBu', reversescale=False,
+                                                color=node_color, size=25,
+                                                colorbar=dict(thickness=10, title='Score Change')))
+            fig_impact = go.Figure(data=[edge_trace, node_trace],
+                                   layout=go.Layout(title='Intervention Effect (Change from Baseline)',
+                                                    showlegend=False, margin=dict(b=20,l=5,r=5,t=40),
+                                                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+            st.plotly_chart(fig_impact, use_container_width=True)
+            st.caption("Magnitude of the intervention effect if an intervention is applied. Red = increase, Blue = decrease.")
+        else:
+            st.info("Run a sensitivity analysis to see the intervention effect here.")
 
 # ---- Cluster Breakdown ----
 st.markdown("---")
@@ -503,19 +527,6 @@ else:
     if st.session_state.sensitivity_active:
         st.caption("🔬 *These insights reflect the sensitivity scenario currently active.*")
 
-# ---- Simulation Timeline ----
-if len(twin.history) > 1:
-    st.markdown("---")
-    st.subheader("Simulation Timeline")
-    st.caption("Shows how the three key macro‑metrics evolve step‑by‑step, revealing the delayed effects of interventions – vital for policy planning.")
-    hist = pd.DataFrame(twin.history)
-    hist['Step'] = range(len(hist))
-    hist_melt = hist.melt(id_vars='Step', value_vars=['Projected to Relocate (%)','Evacuating (%)','Resisting LGU (%)'],
-                          var_name='Metric', value_name='Percentage')
-    fig_time = px.line(hist_melt, x='Step', y='Percentage', color='Metric',
-                       title='Macro-Metrics Over Time', markers=True)
-    st.plotly_chart(fig_time, use_container_width=True)
-
 # ---- Sensitivity Results ----
 if st.session_state.sensitivity_results is not None:
     st.markdown("---")
@@ -528,73 +539,3 @@ if st.session_state.sensitivity_results is not None:
                        title='Outcome vs Parameter')
     st.plotly_chart(fig_sens, use_container_width=True)
     st.dataframe(df, use_container_width=True)
-
-    # Network Impact View
-    if st.session_state.get('baseline_node_scores') and st.session_state.get('final_node_scores'):
-        st.subheader("🔗 Network Impact – Node Score Changes")
-        baseline = st.session_state.baseline_node_scores
-        final = st.session_state.final_node_scores
-        node_names = list(baseline.keys())
-        changes = [final[n] - baseline[n] for n in node_names]
-
-        G_impact = nx.DiGraph()
-        for name in node_names:
-            G_impact.add_node(name, change=changes[node_names.index(name)])
-        for edge in twin.edges:
-            G_impact.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
-
-        pos = nx.spring_layout(G_impact, k=0.35, seed=42)
-        edge_x, edge_y = [], []
-        for e in G_impact.edges():
-            x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
-            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-        edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
-                                hoverinfo='none', mode='lines')
-        node_x, node_y, node_text, node_color = [], [], [], []
-        for n, d in G_impact.nodes(data=True):
-            x, y = pos[n]
-            node_x.append(x); node_y.append(y)
-            node_text.append(f"{n}<br>Change: {d['change']:+.1f}")
-            node_color.append(d['change'])
-        node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
-                                text=list(G_impact.nodes()), textposition="bottom center",
-                                hovertext=node_text, hoverinfo='text',
-                                marker=dict(showscale=True, colorscale='RdBu', reversescale=False,
-                                            color=node_color, size=25,
-                                            colorbar=dict(thickness=10, title='Score Change')))
-        fig_impact = go.Figure(data=[edge_trace, node_trace],
-                               layout=go.Layout(title='Node Score Changes from Baseline',
-                                                showlegend=False, margin=dict(b=20,l=5,r=5,t=40),
-                                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-        st.plotly_chart(fig_impact, use_container_width=True)
-
-# ---- Advisory Response Log ----
-st.markdown("---")
-st.subheader("📋 Advisory Response Log")
-log_disabled = (pop == 0)
-if st.button("📌 Log Current Snapshot", disabled=log_disabled):
-    log_entry = {
-        "Barangay": st.session_state.current_barangay,
-        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Severity": f"{flood_sev:.2f} ({pagasa_label})",
-        "Total Population": pop,
-        "Relocate %": reloc_pct,
-        "Evacuating %": evac_pct,
-        "Resisting LGU %": resist_pct,
-        "Proactive %": advanced['Proactive Preparedness (%)'],
-        "LGU Trust %": advanced['LGU Trust & Cooperation (%)'],
-        "Heritage Refusal %": advanced['Heritage-Based Refusal (%)'],
-        "Demolition Anxiety %": advanced['Demolition Anxiety (%)'],
-        "Relocation Readiness %": advanced['Relocation Readiness (%)']
-    }
-    st.session_state.log_entries.append(log_entry)
-    st.success("Snapshot logged.")
-
-if st.session_state.log_entries:
-    log_df = pd.DataFrame(st.session_state.log_entries)
-    st.dataframe(log_df, use_container_width=True)
-    csv = log_df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Advisory History (CSV)", csv, "advisory_log.csv", "text/csv")
-
-st.checkbox("Auto‑log on advisory change", key="auto_log")
