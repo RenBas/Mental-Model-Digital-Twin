@@ -1,23 +1,42 @@
+# ui/insights.py
+
 import streamlit as st
 
-def render_policy_insights(twin, metrics, advanced, flood_sev, label, barangay_title):
+def render_policy_insights(twin, metrics, advanced, flood_sev, label, barangay_title,
+                           sensitivity_active=False, sensitivity_param=""):
     pop = metrics['Total Population']
     reloc_pct = metrics['Projected to Relocate (%)']
     evac_pct = metrics['Evacuating (%)']
     resist_pct = metrics['Resisting LGU (%)']
 
     insight_parts = []
-    insight_parts.append(
-        f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
-        f"Under the current PAGASA advisory ({label}, severity {flood_sev:.2f}), "
-        f"**{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
-        f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
-        f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
-        f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
-        f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
-        f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
-        f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
-    )
+
+    # Opening sentence – adapt to scenario or PAGASA advisory
+    if sensitivity_active:
+        scenario_desc = f"the sensitivity scenario ({sensitivity_param})"
+        insight_parts.append(
+            f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
+            f"Under **{scenario_desc}** (severity {flood_sev:.2f}), "
+            f"**{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
+            f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
+            f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
+            f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
+            f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
+            f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
+            f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
+        )
+    else:
+        insight_parts.append(
+            f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
+            f"Under the current PAGASA advisory ({label}, severity {flood_sev:.2f}), "
+            f"**{reloc_pct:.1f}%** are projected to relocate, **{evac_pct:.1f}%** are prepared to evacuate, "
+            f"and **{resist_pct:.1f}%** show resistance to LGU initiatives. "
+            f"Advanced indicators: proactive preparedness {advanced['Proactive Preparedness (%)']:.1f}%, "
+            f"LGU trust {advanced['LGU Trust & Cooperation (%)']:.1f}%, "
+            f"heritage refusal {advanced['Heritage-Based Refusal (%)']:.1f}%, "
+            f"demolition anxiety {advanced['Demolition Anxiety (%)']:.1f}%, "
+            f"relocation readiness {advanced['Relocation Readiness (%)']:.1f}%."
+        )
 
     # Relocation insights
     if reloc_pct > 30:
