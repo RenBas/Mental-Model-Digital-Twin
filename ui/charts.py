@@ -6,10 +6,19 @@ import plotly.graph_objects as go
 import networkx as nx
 import pandas as pd
 
-def render_network_graph(twin, barangay_title):
+def render_network_graph(twin, barangay_title, node_scores=None):
+    """
+    Renders the 12‑node psychological network graph.
+    If node_scores dict is provided, those scores are used instead of twin.nodes.current_score.
+    """
     G = nx.DiGraph()
-    for name, node in twin.nodes.items():
-        G.add_node(name, score=node.current_score)
+    if node_scores is not None:
+        # Use provided scores (e.g., baseline frozen scores)
+        for name, score in node_scores.items():
+            G.add_node(name, score=score)
+    else:
+        for name, node in twin.nodes.items():
+            G.add_node(name, score=node.current_score)
     for edge in twin.edges:
         G.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
 
