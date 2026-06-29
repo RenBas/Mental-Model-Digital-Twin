@@ -629,7 +629,6 @@ with st.sidebar:
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                # Only trigger calibration if data has changed
                 current_hash = hashlib.md5(df_raw.to_csv(index=False).encode()).hexdigest()
                 if st.session_state.last_processed_hash != current_hash:
                     st.session_state.raw_data = df_raw
@@ -695,7 +694,7 @@ with st.sidebar:
         for _ in range(steps_to_run):
             st.session_state.twin.step()
         st.rerun()
-    if st.button("🔄 Reset Simulation", use_container_width=True, disabled=run_disabled):
+    if st.button("♻️ Restore Baseline", use_container_width=True, disabled=run_disabled):
         if st.session_state.baseline_params is not None:
             bp = st.session_state.baseline_params
             st.session_state.twin = DigitalTwin(
@@ -980,7 +979,6 @@ if st.session_state.get('needs_calibration') and st.session_state.get('raw_data'
             st.error(f"Calibration failed: {e}")
         finally:
             st.session_state.needs_calibration = False
-            # No st.rerun() – the dashboard will update immediately
     else:
         st.warning("Not enough respondents for the selected scope.")
         st.session_state.needs_calibration = False
@@ -1397,7 +1395,8 @@ st.markdown("---")
 
 # Logging and download
 st.subheader("📋 Advisory Response Log")
-if st.button("📌 Log Current Snapshot"):
+log_disabled = (pop == 0)  # disable log button when no data
+if st.button("📌 Log Current Snapshot", disabled=log_disabled):
     log_entry = {
         "Barangay": st.session_state.current_barangay,
         "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
