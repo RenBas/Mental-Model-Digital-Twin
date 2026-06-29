@@ -3,7 +3,9 @@
 import streamlit as st
 
 def render_policy_insights(twin, metrics, advanced, flood_sev, label, barangay_title,
-                           sensitivity_active=False, sensitivity_param=""):
+                           sensitivity_active=False, sensitivity_param="",
+                           sensitivity_start_val=None, sensitivity_end_val=None,
+                           sensitivity_unit=""):
     pop = metrics['Total Population']
     reloc_pct = metrics['Projected to Relocate (%)']
     evac_pct = metrics['Evacuating (%)']
@@ -13,7 +15,12 @@ def render_policy_insights(twin, metrics, advanced, flood_sev, label, barangay_t
 
     # Opening sentence – adapt to scenario or PAGASA advisory
     if sensitivity_active:
-        scenario_desc = f"the sensitivity scenario ({sensitivity_param})"
+        # Build a scenario description using the stored range
+        if sensitivity_start_val is not None and sensitivity_end_val is not None:
+            range_text = f"{sensitivity_start_val:.0f}‑{sensitivity_end_val:.0f} {sensitivity_unit}"
+        else:
+            range_text = sensitivity_param
+        scenario_desc = f"the sensitivity scenario ({sensitivity_param}, {range_text})"
         insight_parts.append(
             f"**{barangay_title}** analysis covers **{pop:,} residents** (uploaded survey data). "
             f"Under **{scenario_desc}** (severity {flood_sev:.2f}), "
