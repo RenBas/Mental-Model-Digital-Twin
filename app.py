@@ -14,6 +14,7 @@ from PIL import Image
 from io import BytesIO
 import hashlib
 import datetime
+import copy
 
 # ==============================================================================
 # 1. DATA CLASSES
@@ -594,7 +595,8 @@ defaults = {
     'log_entries': [],
     'auto_log': True,
     'prev_k_mode': "Auto (silhouette)",
-    'dark_mode': False
+    'dark_mode': False,
+    'sensitivity_results': None   # to store the dataframe and parameter info
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -954,6 +956,92 @@ with st.sidebar:
     if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True, disabled=run_disabled):
         st.session_state.twin.reset()
         st.rerun()
+
+    # ---------- Sensitivity Analysis ----------
+    st.markdown("---")
+    st.header("📊 Sensitivity Analysis")
+    if run_disabled:
+        st.caption("Upload and calibrate data first.")
+    else:
+        param_type = st.radio("Parameter to vary", ["Flood Severity", "CAC Construct"], key="sensitivity_param_type")
+        if param_type == "Flood Severity":
+            start_val = st.number_input("Start severity", 0.0, 1.0, st.session_state.twin.flood_severity, 0.05)
+            end_val = st.number_input("End severity", 0.0, 1.0, min(st.session_state.twin.flood_severity + 0.2, 1.0), 0.05)
+        else:
+            construct_list = list(col_map.keys())
+            chosen_construct = st.selectbox("Construct", construct_list, key="sens_construct")
+            component = st.radio("Component", ["Challenge", "Acceptance", "Commitment"], key="sens_component")
+            current_val = st.session_state.twin.nodes[chosen_construct].baseline_cac[component]
+            start_val = st.number_input(f"Start {component}", 0.0, 100.0, float(current_val), 1.0)
+            end_val = st.number_input(f"End {component}", 0.0, 100.0, min(float(current_val) + 20.0, 100.0), 1.0)
+        n_steps = st.slider("Number of steps", 5, 30, 10)
+
+        if st.button("▶️ Run Sensitivity Analysis", disabled=run_disabled):
+            # Perform fast sweep without rebuilding population
+            twin = st.session_state.twin
+            # Save original state
+            orig_flood_severity = twin.flood_severity
+            if param_type == "CAC Construct":
+                node = twin.nodes[chosen_construct]
+                orig_challenge = node.baseline_cac['Challenge']
+                orig_acceptance = node.baseline_cac['Acceptance']
+                orig_commitment = node.baseline_cac['Commitment']
+                orig_score = node.current_score
+                # Save original agent states for that construct
+                orig_agent_states = [agent.node_states[chosen_construct] for agent in twin.agents]
+
+            values = np.linspace(start_val, end_val, n_steps)
+            results = []
+
+            for val in values:
+                if param_type == "Flood Severity":
+                    twin.flood_severity = val
+                else:
+                    # Update node CAC and current_score
+                    if component == "Challenge":
+                        node.update_cac(challenge=val)
+                    elif component == "Acceptance":
+                        node.update_cac(acceptance=val)
+                    else:
+                        node.update_cac(commitment=val)
+                    # Update all agents' node_states for this construct to the new node score
+                    for agent in twin.agents:
+                        agent.node_states[chosen_construct] = node.current_score
+
+                # Re-evaluate decisions
+                for agent in twin.agents:
+                    agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
+
+                # Compute metrics
+                metrics = twin.get_metrics()
+                advanced = twin.get_advanced_metrics()
+                results.append({
+                    'Parameter Value': val,
+                    'Relocate %': metrics['Projected to Relocate (%)'],
+                    'Evacuating %': metrics['Evacuating (%)'],
+                    'Resisting LGU %': metrics['Resisting LGU (%)'],
+                    'Proactive %': advanced['Proactive Preparedness (%)'],
+                    'LGU Trust %': advanced['LGU Trust & Cooperation (%)'],
+                    'Heritage Refusal %': advanced['Heritage-Based Refusal (%)'],
+                    'Demolition Anxiety %': advanced['Demolition Anxiety (%)'],
+                    'Relocation Readiness %': advanced['Relocation Readiness (%)']
+                })
+
+            # Restore original state
+            twin.flood_severity = orig_flood_severity
+            if param_type == "CAC Construct":
+                node.update_cac(challenge=orig_challenge, acceptance=orig_acceptance, commitment=orig_commitment)
+                node.current_score = orig_score
+                for agent, orig_state in zip(twin.agents, orig_agent_states):
+                    agent.node_states[chosen_construct] = orig_state
+                # Re-evaluate agents with restored state
+                for agent in twin.agents:
+                    agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
+
+            # Store results in session state
+            st.session_state.sensitivity_results = pd.DataFrame(results)
+            st.session_state.sensitivity_param = f"{param_type} – {chosen_construct} {component}" if param_type == "CAC Construct" else "Flood Severity"
+            st.rerun()
 
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
@@ -1364,6 +1452,18 @@ else:
     st.info("Run at least two steps to see the timeline.")
 
 st.markdown("---")
+
+# ---------- Sensitivity Analysis Results ----------
+if st.session_state.sensitivity_results is not None:
+    st.subheader("📈 Sensitivity Analysis Results")
+    st.caption(f"Varying **{st.session_state.sensitivity_param}**")
+    df = st.session_state.sensitivity_results
+    fig_sens = px.line(df, x='Parameter Value', y=['Relocate %', 'Evacuating %', 'Resisting LGU %',
+                                                   'Proactive %', 'LGU Trust %', 'Heritage Refusal %',
+                                                   'Demolition Anxiety %', 'Relocation Readiness %'],
+                       title='Outcome vs Parameter')
+    st.plotly_chart(fig_sens, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
 
 # Logging and download
 st.subheader("📋 Advisory Response Log")
