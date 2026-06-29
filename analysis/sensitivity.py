@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+from engine.analytics import CommunityAnalytics
 
 def run_sensitivity(twin, param_type, chosen_construct, component, start_val, end_val, n_steps):
     """
@@ -40,6 +41,9 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
         for agent in twin.agents:
             agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
 
+        # ★ Rebuild analytics so metrics reflect the current state
+        twin.analytics = CommunityAnalytics(twin.agents, list(twin.nodes.keys()))
+
         metrics = twin.get_metrics()
         advanced = twin.get_advanced_metrics()
         results.append({
@@ -63,5 +67,7 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
             agent.node_states[chosen_construct] = orig_state
         for agent in twin.agents:
             agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
+        # Rebuild analytics to restore original metrics
+        twin.analytics = CommunityAnalytics(twin.agents, list(twin.nodes.keys()))
 
     return pd.DataFrame(results)
