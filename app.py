@@ -235,8 +235,8 @@ with st.sidebar:
     advisory = fetch_pagasa_advisory()
     pagasa_severity, pagasa_label = render_pagasa_gauge(advisory, st.session_state.disable_flashing, st.session_state.disable_flashing)
 
-   if st.session_state.use_pagasa_auto and pagasa_severity is not None and not st.session_state.sensitivity_active:
-    st.session_state.twin.flood_severity = pagasa_severity
+    if st.session_state.use_pagasa_auto and pagasa_severity is not None and not st.session_state.sensitivity_active:
+        st.session_state.twin.flood_severity = pagasa_severity
 
     if st.button("🔄 Refresh Live Advisory"):
         fetch_pagasa_advisory.clear()
