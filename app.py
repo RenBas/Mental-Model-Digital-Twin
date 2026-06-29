@@ -9,22 +9,6 @@ import hashlib
 import datetime
 import requests
 
-# Sensitivity helper – which metrics are influenced by each construct
-CONSTRUCT_METRIC_MAP = {
-    "Prevention and flooding":       ["Evacuating %", "Proactive %"],
-    "Coping during flooding":        ["Evacuating %", "Proactive %"],
-    "Flooding and Family":           ["Relocate %"],
-    "Desire for relocation":         ["Relocate %"],
-    "Preference and adaptation":     ["Relocate %", "Relocation Readiness %"],
-    "Feasibility of relocation":     ["Relocate %"],
-    "Fear of housing demolition":    ["Relocate %", "Resisting LGU %", "Demolition Anxiety %"],
-    "Viewpoints towards LGU":        ["Evacuating %", "LGU Trust %", "Resisting LGU %"],  # indirectly through resistance utility
-    "Assistance for relocation":     ["Relocate %", "LGU Trust %"],
-    "Rights to live in the area":    ["Resisting LGU %"],
-    "Living in the disaster area":   ["Resisting LGU %"],  # via rights? Actually Living->Rights regression is not directly in decision formula, but system dynamics may change; we'll note it's only via simulation steps, not immediate sweep.
-    "Family history and identity":   ["Relocate %", "Resisting LGU %", "Heritage Refusal %"]
-}
-
 from data.constants import col_map, build_base_nodes_and_edges
 from data.calibration import run_calibration
 from data.pagasa import fetch_pagasa_advisory
@@ -307,17 +291,41 @@ with st.sidebar:
         st.caption("Upload and calibrate data first.")
     else:
         param_type = st.radio("Parameter to vary", ["Flood Severity", "CAC Construct"], key="sensitivity_param_type")
+
+        # Helper mapping
+        CONSTRUCT_METRIC_MAP = {
+            "Prevention and flooding":       ["Evacuating %", "Proactive %"],
+            "Coping during flooding":        ["Evacuating %", "Proactive %"],
+            "Flooding and Family":           ["Relocate %"],
+            "Desire for relocation":         ["Relocate %"],
+            "Preference and adaptation":     ["Relocate %", "Relocation Readiness %"],
+            "Feasibility of relocation":     ["Relocate %"],
+            "Fear of housing demolition":    ["Relocate %", "Resisting LGU %", "Demolition Anxiety %"],
+            "Viewpoints towards LGU":        ["Evacuating %", "LGU Trust %"],
+            "Assistance for relocation":     ["Relocate %", "LGU Trust %"],
+            "Rights to live in the area":    ["Resisting LGU %"],
+            "Living in the disaster area":   ["Resisting LGU %"],
+            "Family history and identity":   ["Relocate %", "Resisting LGU %", "Heritage Refusal %"]
+        }
+
         if param_type == "Flood Severity":
-            start_val = st.number_input("Start severity", 0.0, 1.0, st.session_state.twin.flood_severity, 0.05)
-            end_val = st.number_input("End severity", 0.0, 1.0, min(st.session_state.twin.flood_severity + 0.2, 1.0), 0.05)
-            chosen_construct = None; component = None
+            st.info("ℹ️ Flood Severity directly affects **Evacuating %**. Other indicators remain stable.")
+            start_val = st.number_input("Start severity", 0.0, 1.0, 0.0, 0.05)
+            end_val   = st.number_input("End severity",   0.0, 1.0, 1.0, 0.05)
+            chosen_construct = None
+            component = None
         else:
             construct_list = list(col_map.keys())
             chosen_construct = st.selectbox("Construct", construct_list, key="sens_construct")
             component = st.radio("Component", ["Challenge", "Acceptance", "Commitment"], key="sens_component")
-            current_val = st.session_state.twin.nodes[chosen_construct].baseline_cac[component]
-            start_val = st.number_input(f"Start {component}", 0.0, 100.0, float(current_val), 1.0)
-            end_val = st.number_input(f"End {component}", 0.0, 100.0, min(float(current_val) + 20.0, 100.0), 1.0)
+            affected = CONSTRUCT_METRIC_MAP.get(chosen_construct, [])
+            if affected:
+                st.info(f"ℹ️ Changing **{chosen_construct}** ({component}) will immediately affect: {', '.join(affected)}.")
+            else:
+                st.info(f"ℹ️ **{chosen_construct}** does not directly appear in any decision formula. Run simulation steps to see indirect effects.")
+            start_val = st.number_input(f"Start {component}", 0.0, 100.0, 0.0, 1.0)
+            end_val   = st.number_input(f"End {component}",   0.0, 100.0, 100.0, 1.0)
+
         n_steps = st.slider("Number of steps", 5, 30, 10)
 
         if st.button("▶️ Run Sensitivity Analysis", disabled=run_disabled):
@@ -360,7 +368,6 @@ try:
     fig_map.update_yaxes(showgrid=False)
     st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
     st.caption("Official DOST-PAGASA map. Use the toolbar or mouse wheel to zoom and pan.")
-    # Map download button
     if st.button("📥 Download Map (interactive HTML)"):
         html_str = fig_map.to_html(include_plotlyjs='cdn')
         st.download_button("Save map.html", html_str, "tagoloan_river_basin.html", "text/html")
