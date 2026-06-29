@@ -3,6 +3,15 @@ import pandas as pd
 from engine.analytics import CommunityAnalytics
 
 def run_sensitivity(twin, param_type, chosen_construct, component, start_val, end_val, n_steps):
+    # Show helper
+        if param_type == "Flood Severity":
+            st.info("ℹ️ Flood Severity directly affects **Evacuating %**. Other indicators remain stable (they do not depend on severity).")
+        else:
+            affected = CONSTRUCT_METRIC_MAP.get(chosen_construct, [])
+            if affected:
+                st.info(f"ℹ️ Changing **{chosen_construct}** ({component}) will immediately affect: {', '.join(affected)}.")
+            else:
+                st.info(f"ℹ️ **{chosen_construct}** does not directly appear in any decision formula. Run simulation steps to see indirect effects.")
     # Save original state
     orig_flood_severity = twin.flood_severity
     if param_type == "CAC Construct":
