@@ -1,15 +1,8 @@
-# analysis/sensitivity.py
-
 import numpy as np
 import pandas as pd
 from engine.analytics import CommunityAnalytics
 
 def run_sensitivity(twin, param_type, chosen_construct, component, start_val, end_val, n_steps):
-    """
-    Fast parameter sweep – temporarily adjust one parameter, re‑evaluate decisions,
-    and record behavioural/advanced metrics.  The twin is restored after the sweep.
-    Returns a DataFrame with columns: Parameter Value, Relocate %, Evacuating %, ...
-    """
     # Save original state
     orig_flood_severity = twin.flood_severity
     if param_type == "CAC Construct":
@@ -33,17 +26,17 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
                 node.update_cac(acceptance=val)
             else:
                 node.update_cac(commitment=val)
-            # Push the new score to all agents for this construct
             for agent in twin.agents:
                 agent.node_states[chosen_construct] = node.current_score
 
-        # Re‑evaluate decisions
+        # Reset sticky flags so each step is independent
+        for agent in twin.agents:
+            agent.reset_decisions()
+
         for agent in twin.agents:
             agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
 
-        # ★ Rebuild analytics so metrics reflect the current state
         twin.analytics = CommunityAnalytics(twin.agents, list(twin.nodes.keys()))
-
         metrics = twin.get_metrics()
         advanced = twin.get_advanced_metrics()
         results.append({
@@ -66,8 +59,8 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
         for agent, orig_state in zip(twin.agents, orig_agent_states):
             agent.node_states[chosen_construct] = orig_state
         for agent in twin.agents:
+            agent.reset_decisions()
             agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
-        # Rebuild analytics to restore original metrics
         twin.analytics = CommunityAnalytics(twin.agents, list(twin.nodes.keys()))
 
     return pd.DataFrame(results)
