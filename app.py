@@ -56,7 +56,7 @@ def apply_dark_mode():
 
 apply_dark_mode()
 
-# ---------- Session state ----------
+# ---------- Session state – ensure every expected key exists ----------
 if 'twin' not in st.session_state:
     nodes, edges = build_base_nodes_and_edges()
     st.session_state.twin = DigitalTwin(
@@ -65,18 +65,25 @@ if 'twin' not in st.session_state:
         col_map=col_map
     )
 
-defaults = {
-    'data_calibrated': False, 'respondent_clusters': None,
-    'current_barangay': "All Barangays", 'raw_data': None,
-    'disable_flashing': False, 'use_pagasa_auto': True,
-    'pagasa_severity': None, 'prev_pagasa_severity': None,
+# All keys that may be missing from older session states
+_defaults = {
+    'data_calibrated': False,
+    'respondent_clusters': None,
+    'current_barangay': "All Barangays",
+    'raw_data': None,
+    'disable_flashing': False,
+    'use_pagasa_auto': True,
+    'pagasa_severity': None,
+    'prev_pagasa_severity': None,
     'baseline_params': None,
-    'sensitivity_results': None, 'sensitivity_param': "",
+    'sensitivity_results': None,
+    'sensitivity_param': "",
     'sensitivity_active': False,
     'baseline_node_scores': None,
-    'final_node_scores': None
+    'final_node_scores': None,
+    'sensitivity_param_type': "Flood Severity"   # store the param_type for later reference
 }
-for key, val in defaults.items():
+for key, val in _defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
@@ -333,6 +340,8 @@ with st.sidebar:
             st.session_state.baseline_node_scores = baseline_scores
             st.session_state.final_node_scores = final_scores
             st.session_state.sensitivity_active = True
+            # Store the param_type for the results section
+            st.session_state.sensitivity_param_type = param_type
             st.rerun()
 
 # ---------- Main Dashboard ----------
@@ -576,8 +585,9 @@ if st.session_state.sensitivity_results is not None:
     st.subheader("📈 Sensitivity Analysis Results")
     st.caption(f"Varying **{st.session_state.sensitivity_param}**")
     df = st.session_state.sensitivity_results
-    # Determine x-axis label
-    if param_type == "Flood Severity":
+    # Determine x-axis label from the stored param type
+    param_type_for_label = st.session_state.sensitivity_param_type
+    if param_type_for_label == "Flood Severity":
         x_label = "Rainfall (mm)"
     else:
         x_label = df.columns[0]  # e.g., "Desire for relocation Acceptance (%)"
