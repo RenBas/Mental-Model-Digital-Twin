@@ -1,12 +1,12 @@
+# engine/twin.py
+
 import numpy as np
-from models.node import MentalModelNode
-from models.edge import MentalModelEdge
 from engine.generator import PopulationGenerator
 from engine.analytics import CommunityAnalytics
 
 class DigitalTwin:
     def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
-                 damping_factor=0.5, seed=None):
+                 damping_factor=0.5, seed=None, col_map=None):
         self.nodes = nodes
         self.edges = edges
         self.damping_factor = damping_factor
@@ -21,8 +21,11 @@ class DigitalTwin:
         for edge in self.edges:
             self.incoming_edges[edge.target_name].append((edge.source_name, edge.coefficient))
 
-        self.generator = PopulationGenerator(col_map=None)  # will be set after import
-        # We'll set the generator's col_map externally
+        # Initialise generator with the provided col_map
+        if col_map is None:
+            raise ValueError("col_map must be provided to DigitalTwin")
+        self.generator = PopulationGenerator(col_map)
+
         self.agents = self.generator.generate_population(
             self.total_population, self.cluster_profiles, self.nodes, seed=seed
         )
@@ -85,11 +88,6 @@ class DigitalTwin:
 
     def get_metrics(self):
         return self.analytics.get_behavioral_metrics()
-    # engine/twin.py (add `col_map` parameter)
-    def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
-             damping_factor=0.5, seed=None, col_map=None):
-    …
-    self.generator = PopulationGenerator(col_map)
 
     def get_advanced_metrics(self):
         return self.analytics.get_advanced_metrics()
