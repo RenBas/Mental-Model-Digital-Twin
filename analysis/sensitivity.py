@@ -1,3 +1,5 @@
+# analysis/sensitivity.py
+
 import numpy as np
 import pandas as pd
 from engine.analytics import CommunityAnalytics
@@ -5,9 +7,10 @@ from engine.analytics import CommunityAnalytics
 def run_sensitivity(twin, param_type, chosen_construct, component, start_val, end_val, n_steps):
     """
     Fast parameter sweep – temporarily adjust one parameter, re‑evaluate decisions,
-    and record behavioural/advanced metrics.  The twin is restored after the sweep.
+    and record behavioural/advanced metrics. The twin is left in the state of the
+    LAST parameter value (so the dashboard reflects the scenario).
+    Returns: (DataFrame, dict of baseline scores, dict of final node scores)
     """
-    # --- Validate inputs ---
     if param_type not in ("Flood Severity", "CAC Construct"):
         raise ValueError(f"Unknown param_type: {param_type}")
     if param_type == "CAC Construct":
@@ -18,39 +21,32 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
         if chosen_construct not in twin.nodes:
             raise ValueError(f"Construct not found: {chosen_construct}")
 
-    # --- Save original state ---
-    orig_flood_severity = twin.flood_severity
+    # --- Save baseline node scores BEFORE the sweep (for network impact view) ---
+    baseline_scores = {name: node.current_score for name, node in twin.nodes.items()}
+    # Save original agent states for the CAC construct (needed if we need to restore, but we don't)
     if param_type == "CAC Construct":
-        node = twin.nodes[chosen_construct]
-        orig_challenge = node.baseline_cac['Challenge']
-        orig_acceptance = node.baseline_cac['Acceptance']
-        orig_commitment = node.baseline_cac['Commitment']
-        orig_score = node.current_score
         orig_agent_states = [agent.node_states.get(chosen_construct, 50.0) for agent in twin.agents]
 
     values = np.linspace(start_val, end_val, n_steps)
     results = []
+    final_node_scores = None
 
     for val in values:
-        # --- Apply parameter change ---
         if param_type == "Flood Severity":
             twin.flood_severity = val
         else:
+            node = twin.nodes[chosen_construct]
             if component == "Challenge":
                 node.update_cac(challenge=val)
             elif component == "Acceptance":
                 node.update_cac(acceptance=val)
-            else:  # Commitment
+            else:
                 node.update_cac(commitment=val)
-            # Push updated node score to all agents
             for agent in twin.agents:
                 agent.node_states[chosen_construct] = node.current_score
 
-        # --- Reset decisions so each step is independent ---
         for agent in twin.agents:
             agent.reset_decisions()
-
-        # --- Re‑evaluate and compute metrics ---
         for agent in twin.agents:
             agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
 
@@ -69,16 +65,8 @@ def run_sensitivity(twin, param_type, chosen_construct, component, start_val, en
             'Relocation Readiness %': advanced['Relocation Readiness (%)']
         })
 
-    # --- Restore original state ---
-    twin.flood_severity = orig_flood_severity
-    if param_type == "CAC Construct":
-        node.update_cac(challenge=orig_challenge, acceptance=orig_acceptance, commitment=orig_commitment)
-        node.current_score = orig_score
-        for agent, orig_state in zip(twin.agents, orig_agent_states):
-            agent.node_states[chosen_construct] = orig_state
-        for agent in twin.agents:
-            agent.reset_decisions()
-            agent.evaluate_decisions(twin.flood_severity, twin.lgu_threat)
-        twin.analytics = CommunityAnalytics(twin.agents, list(twin.nodes.keys()))
+    # Capture final node scores after the last step
+    final_node_scores = {name: node.current_score for name, node in twin.nodes.items()}
 
-    return pd.DataFrame(results)
+    # Return DataFrame and baseline/final scores for network impact view
+    return pd.DataFrame(results), baseline_scores, final_node_scores
