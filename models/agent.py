@@ -1,10 +1,19 @@
+# models/agent.py
+
 class ResidentAgent:
     def __init__(self, agent_id, cluster_name, node_states, cac_states, archetype):
         self.agent_id = agent_id
         self.cluster_name = cluster_name
-        self.node_states = node_states      # dict: construct name -> macro score (0-100)
+        self.node_states = node_states      # dict: construct name → macro score (0–100)
         self.cac_states = cac_states        # dict: cleaned_name_Challenge etc.
         self.archetype = archetype
+        self.has_relocated = False
+        self.will_evacuate = False
+        self.is_adapting_in_place = False
+        self.is_resisting_lgu = False
+
+    def reset_decisions(self):
+        """Reset all behavioural flags – used for sensitivity analysis independent steps."""
         self.has_relocated = False
         self.will_evacuate = False
         self.is_adapting_in_place = False
