@@ -305,7 +305,7 @@ class CommunityAnalytics:
         return cac_avgs
 
 # ==============================================================================
-# 5. UNIFIED DIGITAL TWIN (accepts optional seed for reproducibility)
+# 5. UNIFIED DIGITAL TWIN
 # ==============================================================================
 class DigitalTwin:
     def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
@@ -581,7 +581,6 @@ if 'twin' not in st.session_state:
         lgu_threat=False
     )
 
-# Ensure all expected keys exist
 defaults = {
     'data_calibrated': False,
     'respondent_clusters': None,
@@ -591,13 +590,11 @@ defaults = {
     'use_pagasa_auto': True,
     'pagasa_severity': None,
     'prev_pagasa_severity': None,
-    'needs_calibration': False,
     'baseline_params': None,
     'log_entries': [],
     'auto_log': True,
     'prev_k_mode': "Auto (silhouette)",
-    'dark_mode': False,
-    'last_processed_hash': None
+    'dark_mode': False
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -629,11 +626,7 @@ with st.sidebar:
                 st.button("🔄 Recalibrate (disabled)", disabled=True)
             else:
                 st.success(f"✅ Loaded {len(df_raw)} residents across {df_raw['Barangay_Name'].nunique()} Barangay(s).")
-                current_hash = hashlib.md5(df_raw.to_csv(index=False).encode()).hexdigest()
-                if st.session_state.last_processed_hash != current_hash:
-                    st.session_state.raw_data = df_raw
-                    st.session_state.needs_calibration = True
-                    st.session_state.last_processed_hash = current_hash
+                st.session_state.raw_data = df_raw
         except Exception as e:
             st.error(f"Error reading file: {e}")
     if uploaded_file is None and st.session_state.raw_data is not None:
@@ -649,9 +642,7 @@ with st.sidebar:
         selected_barangay = st.selectbox("Choose a barangay to focus on", barangays,
                                          index=barangays.index(current_brgy) if current_brgy in barangays else 0,
                                          key="barangay_filter")
-        if selected_barangay != st.session_state.current_barangay:
-            st.session_state.current_barangay = selected_barangay
-            st.session_state.needs_calibration = True
+        st.session_state.current_barangay = selected_barangay
 
         if selected_barangay != "All Barangays":
             df_filtered = df_raw[df_raw['Barangay_Name'] == selected_barangay].copy()
@@ -659,10 +650,10 @@ with st.sidebar:
                 st.warning(f"No data found for {selected_barangay}.")
                 st.stop()
             else:
-                st.info(f"📌 Analysing **{selected_barangay}** only. Updating twin automatically.")
+                st.info(f"📌 Analysing **{selected_barangay}** only. Click 'Recalibrate' to update the twin.")
         else:
             df_filtered = df_raw
-            st.info("📌 Analysing **all barangays combined**. Updating twin automatically.")
+            st.info("📌 Analysing **all barangays combined**. Click 'Recalibrate' to update the twin.")
 
         st.subheader("⚙️ K-Means Cluster Settings")
         k_mode = st.radio(
@@ -675,14 +666,88 @@ with st.sidebar:
         if k_mode == "Manual":
             manual_k = st.slider("Number of clusters (K)", 2, 5, 3, key="manual_k_slider")
 
-        if 'prev_k_mode' not in st.session_state:
-            st.session_state.prev_k_mode = k_mode
-        if k_mode != st.session_state.prev_k_mode:
-            st.session_state.prev_k_mode = k_mode
-            st.session_state.needs_calibration = True
+        st.session_state.prev_k_mode = k_mode
 
         if len(df_filtered) < 3:
             st.error("Need at least 3 respondents for clustering.")
+        else:
+            if st.button("🔄 Recalibrate Model with Selected Data", use_container_width=True):
+                with st.spinner("Running K-Means and generating baseline..."):
+                    numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
+                    df_num = df_filtered[numeric_cols]
+                    scaler = MinMaxScaler(feature_range=(0, 100))
+                    X_scaled = scaler.fit_transform(df_num)
+
+                    if k_mode == "Auto (silhouette)":
+                        best_k = 3
+                        best_sil = -1
+                        for k in range(2, min(6, len(df_filtered))):
+                            km = KMeans(n_clusters=k, random_state=42, n_init=10)
+                            labels = km.fit_predict(X_scaled)
+                            sil = silhouette_score(X_scaled, labels)
+                            if sil > best_sil:
+                                best_sil = sil
+                                best_k = k
+                        chosen_k = best_k
+                    elif k_mode == "Fixed (3 clusters)":
+                        chosen_k = 3
+                    else:
+                        chosen_k = manual_k
+
+                    kmeans = KMeans(n_clusters=chosen_k, random_state=42, n_init=10)
+                    final_labels = kmeans.fit_predict(X_scaled)
+
+                    df_labeled = df_filtered.copy()
+                    df_labeled['Cluster'] = final_labels
+                    st.session_state.respondent_clusters = df_labeled
+
+                    df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
+                    df_scaled['Cluster'] = final_labels
+
+                    new_profiles = {}
+                    for i in range(chosen_k):
+                        cluster_data = df_scaled[df_scaled['Cluster'] == i]
+                        ratio = len(cluster_data) / len(df_scaled)
+                        centroids = cluster_data[numeric_cols].mean().to_dict()
+                        base_name, driver = generate_lgu_cluster_name(centroids, col_map)
+
+                        final_name = base_name
+                        counter = 1
+                        while final_name in new_profiles:
+                            final_name = f"{base_name} (Segment {counter})"
+                            counter += 1
+
+                        new_profiles[final_name] = ClusterArchetype(
+                            name=final_name,
+                            population_ratio=ratio,
+                            node_baseline_scores=centroids,
+                            dominant_driver=driver
+                        )
+
+                    data_hash = hashlib.md5(df_filtered.to_csv(index=False).encode()).hexdigest()
+                    seed = int(data_hash, 16) % (2**32)
+
+                    baseline_severity = st.session_state.twin.flood_severity
+
+                    st.session_state.twin = DigitalTwin(
+                        nodes=base_nodes,
+                        edges=base_edges,
+                        cluster_profiles=new_profiles,
+                        total_population=len(df_filtered),
+                        flood_severity=baseline_severity,
+                        lgu_threat=False,
+                        seed=seed
+                    )
+                    st.session_state.data_calibrated = True
+                    st.session_state.baseline_params = dict(
+                        cluster_profiles=new_profiles,
+                        total_population=len(df_filtered),
+                        flood_severity=baseline_severity,
+                        lgu_threat=False,
+                        seed=seed
+                    )
+                    st.success(f"Baseline established. K = {chosen_k}, population = {len(df_filtered)}. Ready for simulation or advisory updates.")
+                    st.rerun()
     else:
         st.info("📝 Upload a 38‑column CSV to begin.")
 
@@ -889,100 +954,6 @@ with st.sidebar:
     if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True, disabled=run_disabled):
         st.session_state.twin.reset()
         st.rerun()
-
-# ---------- Perform automatic calibration if needed ----------
-if st.session_state.get('needs_calibration') and st.session_state.get('raw_data') is not None:
-    df_raw = st.session_state.raw_data
-    barangay = st.session_state.current_barangay
-    k_mode = st.session_state.get('prev_k_mode', "Auto (silhouette)")
-    manual_k = st.session_state.get('manual_k_slider', 3) if k_mode == "Manual" else None
-    df_filtered = df_raw if barangay == "All Barangays" else df_raw[df_raw['Barangay_Name'] == barangay].copy()
-
-    if len(df_filtered) >= 3:
-        try:
-            with st.spinner("Analysing data and generating baseline..."):
-                numeric_cols = [c for c in csv_columns if c not in ['Respondent_Name', 'Barangay_Name']]
-                df_num = df_filtered[numeric_cols]
-                scaler = MinMaxScaler(feature_range=(0, 100))
-                X_scaled = scaler.fit_transform(df_num)
-
-                if k_mode == "Auto (silhouette)":
-                    best_k = 3
-                    best_sil = -1
-                    for k in range(2, min(6, len(df_filtered))):
-                        km = KMeans(n_clusters=k, random_state=42, n_init=10)
-                        labels = km.fit_predict(X_scaled)
-                        sil = silhouette_score(X_scaled, labels)
-                        if sil > best_sil:
-                            best_sil = sil
-                            best_k = k
-                    chosen_k = best_k
-                elif k_mode == "Fixed (3 clusters)":
-                    chosen_k = 3
-                else:
-                    chosen_k = manual_k
-
-                kmeans = KMeans(n_clusters=chosen_k, random_state=42, n_init=10)
-                final_labels = kmeans.fit_predict(X_scaled)
-
-                df_labeled = df_filtered.copy()
-                df_labeled['Cluster'] = final_labels
-                st.session_state.respondent_clusters = df_labeled
-
-                df_scaled = pd.DataFrame(X_scaled, columns=numeric_cols)
-                df_scaled['Cluster'] = final_labels
-
-                new_profiles = {}
-                for i in range(chosen_k):
-                    cluster_data = df_scaled[df_scaled['Cluster'] == i]
-                    ratio = len(cluster_data) / len(df_scaled)
-                    centroids = cluster_data[numeric_cols].mean().to_dict()
-                    base_name, driver = generate_lgu_cluster_name(centroids, col_map)
-
-                    final_name = base_name
-                    counter = 1
-                    while final_name in new_profiles:
-                        final_name = f"{base_name} (Segment {counter})"
-                        counter += 1
-
-                    new_profiles[final_name] = ClusterArchetype(
-                        name=final_name,
-                        population_ratio=ratio,
-                        node_baseline_scores=centroids,
-                        dominant_driver=driver
-                    )
-
-                data_hash = hashlib.md5(df_filtered.to_csv(index=False).encode()).hexdigest()
-                seed = int(data_hash, 16) % (2**32)
-
-                baseline_severity = st.session_state.twin.flood_severity
-
-                st.session_state.twin = DigitalTwin(
-                    nodes=base_nodes,
-                    edges=base_edges,
-                    cluster_profiles=new_profiles,
-                    total_population=len(df_filtered),
-                    flood_severity=baseline_severity,
-                    lgu_threat=False,
-                    seed=seed
-                )
-                st.session_state.data_calibrated = True
-                st.session_state.baseline_params = dict(
-                    cluster_profiles=new_profiles,
-                    total_population=len(df_filtered),
-                    flood_severity=baseline_severity,
-                    lgu_threat=False,
-                    seed=seed
-                )
-                st.success(f"Baseline established. K = {chosen_k}, population = {len(df_filtered)}. Ready for simulation or advisory updates.")
-        except Exception as e:
-            st.error(f"Calibration failed: {e}")
-        finally:
-            st.session_state.needs_calibration = False
-            st.rerun()   # ✅ Rerun so the sidebar and buttons update with the new twin
-    else:
-        st.warning("Not enough respondents for the selected scope.")
-        st.session_state.needs_calibration = False
 
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
