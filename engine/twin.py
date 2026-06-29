@@ -85,6 +85,11 @@ class DigitalTwin:
 
     def get_metrics(self):
         return self.analytics.get_behavioral_metrics()
+    # engine/twin.py (add `col_map` parameter)
+    def __init__(self, nodes, edges, cluster_profiles, total_population, flood_severity, lgu_threat,
+             damping_factor=0.5, seed=None, col_map=None):
+    …
+    self.generator = PopulationGenerator(col_map)
 
     def get_advanced_metrics(self):
         return self.analytics.get_advanced_metrics()
