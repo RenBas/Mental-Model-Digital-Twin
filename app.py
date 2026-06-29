@@ -9,6 +9,22 @@ import hashlib
 import datetime
 import requests
 
+# Sensitivity helper – which metrics are influenced by each construct
+CONSTRUCT_METRIC_MAP = {
+    "Prevention and flooding":       ["Evacuating %", "Proactive %"],
+    "Coping during flooding":        ["Evacuating %", "Proactive %"],
+    "Flooding and Family":           ["Relocate %"],
+    "Desire for relocation":         ["Relocate %"],
+    "Preference and adaptation":     ["Relocate %", "Relocation Readiness %"],
+    "Feasibility of relocation":     ["Relocate %"],
+    "Fear of housing demolition":    ["Relocate %", "Resisting LGU %", "Demolition Anxiety %"],
+    "Viewpoints towards LGU":        ["Evacuating %", "LGU Trust %", "Resisting LGU %"],  # indirectly through resistance utility
+    "Assistance for relocation":     ["Relocate %", "LGU Trust %"],
+    "Rights to live in the area":    ["Resisting LGU %"],
+    "Living in the disaster area":   ["Resisting LGU %"],  # via rights? Actually Living->Rights regression is not directly in decision formula, but system dynamics may change; we'll note it's only via simulation steps, not immediate sweep.
+    "Family history and identity":   ["Relocate %", "Resisting LGU %", "Heritage Refusal %"]
+}
+
 from data.constants import col_map, build_base_nodes_and_edges
 from data.calibration import run_calibration
 from data.pagasa import fetch_pagasa_advisory
