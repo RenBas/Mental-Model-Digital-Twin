@@ -19,8 +19,18 @@ from ui.gauges import render_pagasa_gauge, render_sim_gauge, render_waterlevel_g
 from ui.charts import render_network_graph, render_cluster_breakdown, render_cac_bubble
 from ui.insights import render_policy_insights
 
-st.set_page_config(page_title="Tagoloan Flood-Prone Communities Digital Twin", layout="wide")
+# ---------- Page config (hide extra Streamlit menu items) ----------
+st.set_page_config(
+    page_title="Tagoloan Flood-Prone Communities Digital Twin",
+    layout="wide",
+    menu_items={
+        "Get help": None,
+        "Report a bug": None,
+        "About": None
+    }
+)
 
+# ---------- Dark mode ----------
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -46,6 +56,7 @@ def apply_dark_mode():
 
 apply_dark_mode()
 
+# ---------- Session state ----------
 if 'twin' not in st.session_state:
     nodes, edges = build_base_nodes_and_edges()
     st.session_state.twin = DigitalTwin(
@@ -68,6 +79,27 @@ defaults = {
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
+
+# Helper: mm to severity (inverse of the gauge function)
+def mm_to_severity(mm):
+    if mm <= 10:
+        return mm / 40.0
+    elif mm <= 30:
+        return 0.25 + (mm - 10) / 80.0
+    elif mm <= 60:
+        return 0.50 + (mm - 30) / 120.0
+    else:
+        return 0.75 + (mm - 60) / 160.0
+
+def severity_to_mm(sev):
+    if sev <= 0.25:
+        return sev * 40.0
+    elif sev <= 0.50:
+        return 10.0 + (sev - 0.25) * 80.0
+    elif sev <= 0.75:
+        return 30.0 + (sev - 0.50) * 120.0
+    else:
+        return 60.0 + (sev - 0.75) * 160.0
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -262,9 +294,12 @@ with st.sidebar:
         }
 
         if param_type == "Flood Severity":
-            st.info("ℹ️ Flood Severity directly affects **Evacuating %**. Other indicators remain stable.")
-            start_val = st.number_input("Start severity", 0.0, 1.0, 0.0, 0.05)
-            end_val   = st.number_input("End severity",   0.0, 1.0, 1.0, 0.05)
+            st.info("ℹ️ Flood Severity directly affects **Evacuating %**. Other indicators remain stable.\n\n"
+                    "0–10 mm : Light rain | 10–30 mm : Moderate rain | 30–60 mm : Heavy rain | >60 mm : Torrential rain")
+            mm_start = st.number_input("Start rainfall (mm)", 0.0, 100.0, 0.0, 1.0)
+            mm_end   = st.number_input("End rainfall (mm)",   0.0, 100.0, 100.0, 1.0)
+            start_val = mm_to_severity(mm_start)
+            end_val   = mm_to_severity(mm_end)
             chosen_construct = None
             component = None
         else:
@@ -276,8 +311,8 @@ with st.sidebar:
                 st.info(f"ℹ️ Changing **{chosen_construct}** ({component}) will immediately affect: {', '.join(affected)}.")
             else:
                 st.info(f"ℹ️ **{chosen_construct}** does not directly appear in any decision formula. Run simulation steps to see indirect effects.")
-            start_val = st.number_input(f"Start {component}", 0.0, 100.0, 0.0, 1.0)
-            end_val   = st.number_input(f"End {component}",   0.0, 100.0, 100.0, 1.0)
+            start_val = st.number_input(f"Start {component} (%)", 0.0, 100.0, 0.0, 1.0)
+            end_val   = st.number_input(f"End {component} (%)",   0.0, 100.0, 100.0, 1.0)
 
         n_steps = st.slider("Number of steps", 5, 30, 10)
 
@@ -286,6 +321,13 @@ with st.sidebar:
                 st.session_state.twin, param_type, chosen_construct, component,
                 start_val, end_val, n_steps
             )
+            # Convert parameter values for display
+            if param_type == "Flood Severity":
+                df_result['Parameter Value'] = df_result['Parameter Value'].apply(severity_to_mm)
+                df_result = df_result.rename(columns={'Parameter Value': 'Rainfall (mm)'})
+            else:
+                df_result = df_result.rename(columns={'Parameter Value': f'{chosen_construct} {component} (%)'})
+
             st.session_state.sensitivity_results = df_result
             st.session_state.sensitivity_param = f"{param_type} – {chosen_construct} {component}" if param_type == "CAC Construct" else "Flood Severity"
             st.session_state.baseline_node_scores = baseline_scores
@@ -429,7 +471,6 @@ else:
             st.caption("Current psychological landscape.")
     with col_right:
         if st.session_state.sensitivity_active and st.session_state.baseline_node_scores is not None and st.session_state.final_node_scores is not None:
-            # Build the impact graph (already done below in sensitivity results, but we show a summary here)
             baseline = st.session_state.baseline_node_scores
             final = st.session_state.final_node_scores
             node_names = list(baseline.keys())
@@ -533,9 +574,15 @@ if st.session_state.sensitivity_results is not None:
     st.subheader("📈 Sensitivity Analysis Results")
     st.caption(f"Varying **{st.session_state.sensitivity_param}**")
     df = st.session_state.sensitivity_results
-    fig_sens = px.line(df, x='Parameter Value', y=['Relocate %', 'Evacuating %', 'Resisting LGU %',
-                                                   'Proactive %', 'LGU Trust %', 'Heritage Refusal %',
-                                                   'Demolition Anxiety %', 'Relocation Readiness %'],
-                       title='Outcome vs Parameter')
+    # Determine x-axis label
+    if param_type == "Flood Severity":
+        x_label = "Rainfall (mm)"
+    else:
+        x_label = df.columns[0]  # e.g., "Desire for relocation Acceptance (%)"
+    fig_sens = px.line(df, x=df.columns[0], y=['Relocate %', 'Evacuating %', 'Resisting LGU %',
+                                                'Proactive %', 'LGU Trust %', 'Heritage Refusal %',
+                                                'Demolition Anxiety %', 'Relocation Readiness %'],
+                       title='Outcome vs Parameter',
+                       labels={df.columns[0]: x_label})
     st.plotly_chart(fig_sens, use_container_width=True)
     st.dataframe(df, use_container_width=True)
