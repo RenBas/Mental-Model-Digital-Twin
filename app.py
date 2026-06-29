@@ -1074,8 +1074,8 @@ try:
     fig_map.update_yaxes(showgrid=False)
     st.plotly_chart(fig_map, use_container_width=True, config={'scrollZoom': True})
     st.caption("Official DOST-PAGASA map. Use the toolbar or mouse wheel to zoom and pan.")
-    # Download map as interactive HTML
-    if st.button("📥 Download Map (interactive HTML)"):
+# Download map as interactive HTML
+if st.button("📥 Download Map (interactive HTML)"):
     html_str = fig_map.to_html(include_plotlyjs='cdn')
     st.download_button(
         label="Save map.html",
