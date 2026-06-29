@@ -1,13 +1,20 @@
 import streamlit as st
-# (… all other imports will remain, but we’ll now import our models and engine)
+from data.constants import NODE_DATA, EDGE_DATA, col_map
 from models.node import MentalModelNode
 from models.edge import MentalModelEdge
-from models.agent import ResidentAgent
-from models.archetype import ClusterArchetype
 from engine.twin import DigitalTwin
-from engine.generator import PopulationGenerator
-from engine.analytics import CommunityAnalytics
+from data.calibration import run_calibration
+import pandas as pd
 
-# … the rest of the code (constants, data loading, UI) will be added later
-# For now, this file just proves the imports work.
-st.write("Imports successful!")
+# Build nodes and edges from constants
+nodes = {name: MentalModelNode(name, *vals) for name, vals in NODE_DATA.items()}
+edges = [MentalModelEdge(s, t, c, r2) for s, t, c, r2 in EDGE_DATA]
+
+st.write("Modules loaded successfully!")
+
+# Quick test: load a mock CSV (if available) and run calibration
+uploaded = st.file_uploader("Upload CSV")
+if uploaded:
+    df = pd.read_csv(uploaded)
+    profiles, k, labeled = run_calibration(df, "Auto (silhouette)")
+    st.write(f"K = {k}, clusters: {list(profiles.keys())}")
