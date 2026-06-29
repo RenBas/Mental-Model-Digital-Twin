@@ -8,6 +8,7 @@ from io import BytesIO
 import hashlib
 import datetime
 import requests
+import networkx as nx
 
 from data.constants import col_map, build_base_nodes_and_edges
 from data.calibration import run_calibration
@@ -62,7 +63,10 @@ defaults = {
     'pagasa_severity': None, 'prev_pagasa_severity': None,
     'baseline_params': None, 'log_entries': [], 'auto_log': True,
     'prev_k_mode': "Auto (silhouette)", 'dark_mode': False,
-    'sensitivity_results': None, 'sensitivity_param': ""
+    'sensitivity_results': None, 'sensitivity_param': "",
+    'sensitivity_active': False,
+    'baseline_node_scores': None,
+    'final_node_scores': None
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -167,18 +171,8 @@ with st.sidebar:
         st.info("📝 Upload a 38‑column CSV to begin.")
 
     st.markdown("---")
-    st.header("🎛️ Simulation Controls")
-    steps_to_run = st.selectbox("Steps to run", list(range(1, 11)), index=0)
-    st.caption(
-        "Each step advances the system dynamics and re‑evaluates agent decisions, "
-        "simulating the gradual diffusion of psychological changes through the community. "
-        "More steps = longer simulated time."
-    )
+    st.header("🔄 Restore Baseline")
     run_disabled = (st.session_state.twin.total_population == 0)
-    if st.button("▶️ Run", use_container_width=True, type="primary", disabled=run_disabled):
-        for _ in range(steps_to_run):
-            st.session_state.twin.step()
-        st.rerun()
     if st.button("♻️ Restore Baseline", use_container_width=True, disabled=run_disabled):
         if st.session_state.baseline_params is not None:
             bp = st.session_state.baseline_params
@@ -189,6 +183,7 @@ with st.sidebar:
                 lgu_threat=bp['lgu_threat'], seed=bp['seed'], col_map=col_map
             )
             st.session_state.use_pagasa_auto = True
+            st.session_state.sensitivity_active = False
             st.success("Baseline restored.")
         else:
             st.warning("No baseline available. Upload data first.")
@@ -267,28 +262,6 @@ with st.sidebar:
     st.subheader("🌊 Tagoloan River Water Level")
     render_waterlevel_gauge()
 
-    st.markdown("---")
-    st.header("🎚️ LGU Intervention Sliders")
-    st.caption("Adjust the three CAC components directly. Changing them updates the psychological baseline. "
-               "Click **'🧬 Rebuild Population with Current Settings'** to see the new behavioral outcomes.")
-    with st.expander("Expand to modify constructs", expanded=False):
-        for node_name, node in st.session_state.twin.nodes.items():
-            st.markdown(f"**{node_name}**")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                new_ch = st.slider(f"Challenge", 0.0, 100.0, float(node.baseline_cac['Challenge']), key=f"{node_name}_ch")
-            with col2:
-                new_ac = st.slider(f"Acceptance", 0.0, 100.0, float(node.baseline_cac['Acceptance']), key=f"{node_name}_ac")
-            with col3:
-                new_co = st.slider(f"Commitment", 0.0, 100.0, float(node.baseline_cac['Commitment']), key=f"{node_name}_co")
-            node.baseline_cac['Challenge'] = new_ch
-            node.baseline_cac['Acceptance'] = new_ac
-            node.baseline_cac['Commitment'] = new_co
-            node.current_score = max(0.0, min(100.0, (new_ac + new_co) / 2.0 + (50.0 - new_ch) / 2.0))
-    if st.button("🧬 Rebuild Population with Current Settings", use_container_width=True, disabled=run_disabled):
-        st.session_state.twin.reset()
-        st.rerun()
-
     # ---------- Sensitivity Analysis ----------
     st.markdown("---")
     st.header("📊 Sensitivity Analysis")
@@ -297,7 +270,6 @@ with st.sidebar:
     else:
         param_type = st.radio("Parameter to vary", ["Flood Severity", "CAC Construct"], key="sensitivity_param_type")
 
-        # Helper mapping
         CONSTRUCT_METRIC_MAP = {
             "Prevention and flooding":       ["Evacuating %", "Proactive %"],
             "Coping during flooding":        ["Evacuating %", "Proactive %"],
@@ -334,18 +306,25 @@ with st.sidebar:
         n_steps = st.slider("Number of steps", 5, 30, 10)
 
         if st.button("▶️ Run Sensitivity Analysis", disabled=run_disabled):
-            df_result = run_sensitivity(
+            df_result, baseline_scores, final_scores = run_sensitivity(
                 st.session_state.twin, param_type, chosen_construct, component,
                 start_val, end_val, n_steps
             )
             st.session_state.sensitivity_results = df_result
             st.session_state.sensitivity_param = f"{param_type} – {chosen_construct} {component}" if param_type == "CAC Construct" else "Flood Severity"
+            st.session_state.baseline_node_scores = baseline_scores
+            st.session_state.final_node_scores = final_scores
+            st.session_state.sensitivity_active = True
             st.rerun()
 
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
 st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
 st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
+
+# Sensitivity scenario banner
+if st.session_state.sensitivity_active:
+    st.info("🔬 **Sensitivity Scenario Active** – The dashboard below reflects the selected sensitivity parameters. Click 'Restore Baseline' to return to the original calibrated state.")
 
 twin = st.session_state.twin
 metrics = twin.get_metrics()
@@ -521,12 +500,14 @@ if pop == 0:
     st.info("Insights will appear after data is loaded and calibrated.")
 else:
     render_policy_insights(twin, metrics, advanced, flood_sev, pagasa_label, barangay_title)
+    if st.session_state.sensitivity_active:
+        st.caption("🔬 *These insights reflect the sensitivity scenario currently active.*")
 
 # ---- Simulation Timeline ----
-st.markdown("---")
-st.subheader("Simulation Timeline")
-st.caption("Shows how the three key macro‑metrics evolve step‑by‑step, revealing the delayed effects of interventions – vital for policy planning.")
 if len(twin.history) > 1:
+    st.markdown("---")
+    st.subheader("Simulation Timeline")
+    st.caption("Shows how the three key macro‑metrics evolve step‑by‑step, revealing the delayed effects of interventions – vital for policy planning.")
     hist = pd.DataFrame(twin.history)
     hist['Step'] = range(len(hist))
     hist_melt = hist.melt(id_vars='Step', value_vars=['Projected to Relocate (%)','Evacuating (%)','Resisting LGU (%)'],
@@ -534,22 +515,6 @@ if len(twin.history) > 1:
     fig_time = px.line(hist_melt, x='Step', y='Percentage', color='Metric',
                        title='Macro-Metrics Over Time', markers=True)
     st.plotly_chart(fig_time, use_container_width=True)
-    recent = hist.tail(3)
-    relocate_trend = recent['Projected to Relocate (%)'].diff().mean()
-    evac_trend = recent['Evacuating (%)'].diff().mean()
-    resist_trend = recent['Resisting LGU (%)'].diff().mean()
-    if relocate_trend > 0.5:
-        st.caption(f"📈 **{barangay_title}:** Relocation is trending upward – if this continues, resettlement demand may exceed current capacity.")
-    elif relocate_trend < -0.5:
-        st.caption(f"📉 **{barangay_title}:** Relocation is declining, suggesting that interventions are reducing the desire to leave.")
-    if evac_trend > 0.5:
-        st.caption(f"📈 **{barangay_title}:** Evacuation readiness is improving; maintain current awareness efforts.")
-    elif evac_trend < -0.5:
-        st.caption(f"📉 **{barangay_title}:** Evacuation readiness is dropping – review early warning effectiveness.")
-    if resist_trend > 0.3:
-        st.caption(f"⚠️ **{barangay_title}:** Resistance is growing; potential trigger events (like demolition threats) may be escalating tensions.")
-else:
-    st.info("Run at least two steps to see the timeline.")
 
 # ---- Sensitivity Results ----
 if st.session_state.sensitivity_results is not None:
@@ -563,6 +528,46 @@ if st.session_state.sensitivity_results is not None:
                        title='Outcome vs Parameter')
     st.plotly_chart(fig_sens, use_container_width=True)
     st.dataframe(df, use_container_width=True)
+
+    # Network Impact View
+    if st.session_state.get('baseline_node_scores') and st.session_state.get('final_node_scores'):
+        st.subheader("🔗 Network Impact – Node Score Changes")
+        baseline = st.session_state.baseline_node_scores
+        final = st.session_state.final_node_scores
+        node_names = list(baseline.keys())
+        changes = [final[n] - baseline[n] for n in node_names]
+
+        G_impact = nx.DiGraph()
+        for name in node_names:
+            G_impact.add_node(name, change=changes[node_names.index(name)])
+        for edge in twin.edges:
+            G_impact.add_edge(edge.source_name, edge.target_name, weight=edge.coefficient)
+
+        pos = nx.spring_layout(G_impact, k=0.35, seed=42)
+        edge_x, edge_y = [], []
+        for e in G_impact.edges():
+            x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
+            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+        edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'),
+                                hoverinfo='none', mode='lines')
+        node_x, node_y, node_text, node_color = [], [], [], []
+        for n, d in G_impact.nodes(data=True):
+            x, y = pos[n]
+            node_x.append(x); node_y.append(y)
+            node_text.append(f"{n}<br>Change: {d['change']:+.1f}")
+            node_color.append(d['change'])
+        node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                                text=list(G_impact.nodes()), textposition="bottom center",
+                                hovertext=node_text, hoverinfo='text',
+                                marker=dict(showscale=True, colorscale='RdBu', reversescale=False,
+                                            color=node_color, size=25,
+                                            colorbar=dict(thickness=10, title='Score Change')))
+        fig_impact = go.Figure(data=[edge_trace, node_trace],
+                               layout=go.Layout(title='Node Score Changes from Baseline',
+                                                showlegend=False, margin=dict(b=20,l=5,r=5,t=40),
+                                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+        st.plotly_chart(fig_impact, use_container_width=True)
 
 # ---- Advisory Response Log ----
 st.markdown("---")
