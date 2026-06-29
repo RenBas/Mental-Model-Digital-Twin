@@ -50,30 +50,35 @@ class CommunityAnalytics:
                 "Demolition Anxiety (%)": 0.0,
                 "Relocation Readiness (%)": 0.0
             }
+        # Proactive Preparedness – lowered thresholds to >50
         proactive = self.df[
-            (self.df["Prevention and flooding"] > 60) & 
-            (self.df["Coping during flooding"] > 60)
+            (self.df["Prevention and flooding"] > 50) & 
+            (self.df["Coping during flooding"] > 50)
         ].shape[0]
         proactive_pct = (proactive / self.total_population) * 100
 
+        # LGU Trust & Cooperation – Assistance threshold lowered to >25
         trust_coop = self.df[
             (self.df["Viewpoints towards LGU"] > 50) & 
-            (self.df["Assistance for relocation"] > 30)
+            (self.df["Assistance for relocation"] > 25)
         ].shape[0]
         trust_pct = (trust_coop / self.total_population) * 100
 
+        # Heritage‑Based Refusal – Family history threshold lowered to >40
         heritage_refusal = self.df[
             (self.df["Has_Relocated"] == False) & 
-            (self.df["Family history and identity"] > 48)
+            (self.df["Family history and identity"] > 40)
         ].shape[0]
         heritage_pct = (heritage_refusal / self.total_population) * 100
 
-        anxiety = self.df[self.df["Fear of housing demolition"] > 50].shape[0]
+        # Demolition Anxiety – Fear threshold lowered to >40
+        anxiety = self.df[self.df["Fear of housing demolition"] > 40].shape[0]
         anxiety_pct = (anxiety / self.total_population) * 100
 
+        # Relocation Readiness – Preference threshold lowered to >50
         ready = self.df[
             (self.df["Has_Relocated"] == True) & 
-            (self.df["Preference and adaptation"] > 60)
+            (self.df["Preference and adaptation"] > 50)
         ].shape[0]
         readiness_pct = (ready / self.total_population) * 100
 
