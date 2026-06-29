@@ -65,7 +65,6 @@ if 'twin' not in st.session_state:
         col_map=col_map
     )
 
-# All keys that may be missing from older session states
 _defaults = {
     'data_calibrated': False,
     'respondent_clusters': None,
@@ -80,33 +79,24 @@ _defaults = {
     'sensitivity_param': "",
     'sensitivity_active': False,
     'baseline_node_scores': None,
-    'final_node_scores': None,
-    'sensitivity_param_type': "Flood Severity"   # store the param_type for later reference
+    'final_node_scores': None
 }
 for key, val in _defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
-# Helper: mm to severity (inverse of the gauge function)
+# Helper: mm to severity
 def mm_to_severity(mm):
-    if mm <= 10:
-        return mm / 40.0
-    elif mm <= 30:
-        return 0.25 + (mm - 10) / 80.0
-    elif mm <= 60:
-        return 0.50 + (mm - 30) / 120.0
-    else:
-        return 0.75 + (mm - 60) / 160.0
+    if mm <= 10:        return mm / 40.0
+    elif mm <= 30:      return 0.25 + (mm - 10) / 80.0
+    elif mm <= 60:      return 0.50 + (mm - 30) / 120.0
+    else:               return 0.75 + (mm - 60) / 160.0
 
 def severity_to_mm(sev):
-    if sev <= 0.25:
-        return sev * 40.0
-    elif sev <= 0.50:
-        return 10.0 + (sev - 0.25) * 80.0
-    elif sev <= 0.75:
-        return 30.0 + (sev - 0.50) * 120.0
-    else:
-        return 60.0 + (sev - 0.75) * 160.0
+    if sev <= 0.25:     return sev * 40.0
+    elif sev <= 0.50:   return 10.0 + (sev - 0.25) * 80.0
+    elif sev <= 0.75:   return 30.0 + (sev - 0.50) * 120.0
+    else:               return 60.0 + (sev - 0.75) * 160.0
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -328,7 +318,6 @@ with st.sidebar:
                 st.session_state.twin, param_type, chosen_construct, component,
                 start_val, end_val, n_steps
             )
-            # Convert parameter values for display
             if param_type == "Flood Severity":
                 df_result['Parameter Value'] = df_result['Parameter Value'].apply(severity_to_mm)
                 df_result = df_result.rename(columns={'Parameter Value': 'Rainfall (mm)'})
@@ -340,8 +329,6 @@ with st.sidebar:
             st.session_state.baseline_node_scores = baseline_scores
             st.session_state.final_node_scores = final_scores
             st.session_state.sensitivity_active = True
-            # Store the param_type for the results section
-            st.session_state.sensitivity_param_type = param_type
             st.rerun()
 
 # ---------- Main Dashboard ----------
@@ -585,12 +572,11 @@ if st.session_state.sensitivity_results is not None:
     st.subheader("📈 Sensitivity Analysis Results")
     st.caption(f"Varying **{st.session_state.sensitivity_param}**")
     df = st.session_state.sensitivity_results
-    # Determine x-axis label from the stored param type
-    param_type_for_label = st.session_state.sensitivity_param_type
+    param_type_for_label = st.session_state.get('sensitivity_param_type', 'Flood Severity')
     if param_type_for_label == "Flood Severity":
         x_label = "Rainfall (mm)"
     else:
-        x_label = df.columns[0]  # e.g., "Desire for relocation Acceptance (%)"
+        x_label = df.columns[0]
     fig_sens = px.line(df, x=df.columns[0], y=['Relocate %', 'Evacuating %', 'Resisting LGU %',
                                                 'Proactive %', 'LGU Trust %', 'Heritage Refusal %',
                                                 'Demolition Anxiety %', 'Relocation Readiness %'],
