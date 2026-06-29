@@ -19,7 +19,6 @@ from ui.gauges import render_pagasa_gauge, render_sim_gauge, render_waterlevel_g
 from ui.charts import render_network_graph, render_cluster_breakdown, render_cac_bubble
 from ui.insights import render_policy_insights
 
-# ---------- Page config (hide extra Streamlit menu items) ----------
 st.set_page_config(
     page_title="Tagoloan Flood-Prone Communities Digital Twin",
     layout="wide",
@@ -30,7 +29,6 @@ st.set_page_config(
     }
 )
 
-# ---------- Dark mode ----------
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -56,7 +54,6 @@ def apply_dark_mode():
 
 apply_dark_mode()
 
-# ---------- Session state – ensure every expected key exists ----------
 if 'twin' not in st.session_state:
     nodes, edges = build_base_nodes_and_edges()
     st.session_state.twin = DigitalTwin(
@@ -79,13 +76,15 @@ _defaults = {
     'sensitivity_param': "",
     'sensitivity_active': False,
     'baseline_node_scores': None,
-    'final_node_scores': None
+    'final_node_scores': None,
+    'sensitivity_start_val': None,
+    'sensitivity_end_val': None,
+    'sensitivity_unit': ""
 }
 for key, val in _defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
-# Helper: mm to severity
 def mm_to_severity(mm):
     if mm <= 10:        return mm / 40.0
     elif mm <= 30:      return 0.25 + (mm - 10) / 80.0
@@ -318,10 +317,17 @@ with st.sidebar:
                 st.session_state.twin, param_type, chosen_construct, component,
                 start_val, end_val, n_steps
             )
+            # Store sensitivity range for insights
             if param_type == "Flood Severity":
+                st.session_state.sensitivity_start_val = mm_start
+                st.session_state.sensitivity_end_val = mm_end
+                st.session_state.sensitivity_unit = "mm"
                 df_result['Parameter Value'] = df_result['Parameter Value'].apply(severity_to_mm)
                 df_result = df_result.rename(columns={'Parameter Value': 'Rainfall (mm)'})
             else:
+                st.session_state.sensitivity_start_val = start_val
+                st.session_state.sensitivity_end_val = end_val
+                st.session_state.sensitivity_unit = "%"
                 df_result = df_result.rename(columns={'Parameter Value': f'{chosen_construct} {component} (%)'})
 
             st.session_state.sensitivity_results = df_result
@@ -563,7 +569,10 @@ else:
     render_policy_insights(
         twin, metrics, advanced, flood_sev, pagasa_label, barangay_title,
         sensitivity_active=st.session_state.sensitivity_active,
-        sensitivity_param=st.session_state.get('sensitivity_param', '')
+        sensitivity_param=st.session_state.get('sensitivity_param', ''),
+        sensitivity_start_val=st.session_state.get('sensitivity_start_val'),
+        sensitivity_end_val=st.session_state.get('sensitivity_end_val'),
+        sensitivity_unit=st.session_state.get('sensitivity_unit', '')
     )
 
 # ---- Sensitivity Results ----
