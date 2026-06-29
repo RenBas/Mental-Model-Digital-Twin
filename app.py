@@ -979,6 +979,7 @@ if st.session_state.get('needs_calibration') and st.session_state.get('raw_data'
             st.error(f"Calibration failed: {e}")
         finally:
             st.session_state.needs_calibration = False
+            st.rerun()   # ✅ Rerun so the sidebar and buttons update with the new twin
     else:
         st.warning("Not enough respondents for the selected scope.")
         st.session_state.needs_calibration = False
@@ -1395,7 +1396,7 @@ st.markdown("---")
 
 # Logging and download
 st.subheader("📋 Advisory Response Log")
-log_disabled = (pop == 0)  # disable log button when no data
+log_disabled = (pop == 0)
 if st.button("📌 Log Current Snapshot", disabled=log_disabled):
     log_entry = {
         "Barangay": st.session_state.current_barangay,
