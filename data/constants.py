@@ -77,3 +77,15 @@ EDGE_DATA = [
     ("Assistance for relocation", "Desire for relocation", 0.980, 0.957),
     ("Family history and identity", "Living in the disaster area", 0.373, 0.198)
 ]
+# data/constants.py (add at the bottom)
+from models.node import MentalModelNode
+from models.edge import MentalModelEdge
+
+def build_base_nodes_and_edges():
+    nodes = {}
+    for name, vals in NODE_DATA.items():
+        ch, ac, co, corr_ca, corr_ac, corr_cc = vals
+        nodes[name] = MentalModelNode(name, ch, ac, co, corr_ca, corr_ac, corr_cc)
+
+    edges = [MentalModelEdge(s, t, c, r2) for s, t, c, r2 in EDGE_DATA]
+    return nodes, edges
