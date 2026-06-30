@@ -9,8 +9,6 @@ import hashlib
 import datetime
 import requests
 import networkx as nx
-import base64
-import os
 
 from data.constants import col_map, build_base_nodes_and_edges
 from data.calibration import run_calibration
@@ -20,7 +18,7 @@ from engine.twin import DigitalTwin
 from ui.gauges import render_pagasa_gauge, render_sim_gauge, render_waterlevel_gauge
 from ui.charts import render_network_graph, render_cluster_breakdown, render_cac_bubble
 from ui.insights import render_policy_insights
-from ui.map_html import get_map_html   # <-- NEW
+from ui.map_html import get_map_html
 
 st.set_page_config(
     page_title="Tagoloan Flood-Prone Communities Digital Twin",
@@ -337,17 +335,11 @@ reloc_pct = metrics['Projected to Relocate (%)']
 evac_pct = metrics['Evacuating (%)']
 resist_pct = metrics['Resisting LGU (%)']
 
-# ---- Interactive Map (local PNG or remote fallback) ----
+# ---- Interactive Map with Custom Image ----
 st.subheader("🗺️ Tagoloan River Basin (Interactive Hazard Map)")
 
-map_image_url = "https://pubfiles.pagasa.dost.gov.ph/pagasaweb/images/basins/tagoloan-river-basin.jpg"
-local_map_path = "map.png"
-if os.path.exists(local_map_path):
-    with open(local_map_path, "rb") as f:
-        map_image_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
-    st.success("✅ Local map image loaded.")
-else:
-    st.info("ℹ️ Using default DOST‑PAGASA map. Place a file named 'map.png' in the app folder to replace it.")
+# Permanent custom map image (your Imgur direct link)
+map_image_url = "https://i.imgur.com/pZA62zd.png"
 
 MAP_HTML = get_map_html(map_image_url)
 
