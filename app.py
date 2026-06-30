@@ -19,6 +19,7 @@ from ui.gauges import render_pagasa_gauge, render_sim_gauge, render_waterlevel_g
 from ui.charts import render_network_graph, render_cluster_breakdown, render_cac_bubble
 from ui.insights import render_policy_insights
 from ui.map_html import get_map_html
+from ui.glossary import render_glossary  # <-- new
 
 st.set_page_config(
     page_title="Tagoloan Flood-Prone Communities Digital Twin",
@@ -319,6 +320,10 @@ with st.sidebar:
             st.session_state.sensitivity_active = True
             st.rerun()
 
+    # ---------- Glossary ----------
+    st.markdown("---")
+    render_glossary()
+
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
 st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
@@ -335,14 +340,10 @@ reloc_pct = metrics['Projected to Relocate (%)']
 evac_pct = metrics['Evacuating (%)']
 resist_pct = metrics['Resisting LGU (%)']
 
-# ---- Interactive Map with Custom Image ----
+# ---- Interactive Map ----
 st.subheader("🗺️ Tagoloan River Basin (Interactive Hazard Map)")
-
-# Permanent custom map image (your Imgur direct link)
 map_image_url = "https://i.imgur.com/pZA62zd.png"
-
 MAP_HTML = get_map_html(map_image_url)
-
 st.components.v1.html(MAP_HTML, height=700, scrolling=False)
 st.caption("Interactive map with monitoring stations. Drag to pan, scroll to zoom, click stations for details.")
 
