@@ -2,8 +2,8 @@
 
 def get_map_html(image_src: str) -> str:
     """
-    Returns interactive map HTML that loads the given image immediately.
-    No upload screen – the map is ready as soon as the page renders.
+    Returns interactive map HTML with only the Download button.
+    No title box, no minimap, no extra toolbar buttons, no hint, no edit banner.
     """
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -28,20 +28,8 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 @keyframes pu{{0%,100%{{opacity:.9;transform:scale(1)}}50%{{opacity:.35;transform:scale(1.4)}}}}
 .sl{{position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);white-space:nowrap;font-size:8.5px;font-weight:600;color:#fff;background:rgba(14,20,30,.88);padding:2px 6px;border-radius:3px;pointer-events:none;opacity:0;transition:opacity .12s}}
 .st:hover .sl,.st.sel .sl{{opacity:1}}
-#tb{{position:fixed;top:14px;right:14px;display:flex;flex-direction:column;gap:4px;z-index:10}}
-.tbtn{{width:36px;height:36px;border:none;border-radius:8px;background:var(--p);color:var(--t);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(12px);border:1px solid var(--b);transition:background .15s,color .15s}}
-.tbtn:hover{{background:rgba(211,47,47,.2);color:#fff}}
-.tbtn.on{{background:rgba(211,47,47,.25);color:var(--a)}}
-.dlbtn{{width:auto;padding:0 14px;font-size:11px;font-weight:700;gap:7px;background:rgba(67,160,71,.15)!important;border-color:rgba(67,160,71,.3)!important;color:#81C784!important}}
-.dlbtn:hover{{background:rgba(67,160,71,.3)!important}}
-.tsep{{height:1px;background:var(--b);margin:2px 4px}}
-#ttl{{position:fixed;top:14px;left:14px;z-index:10;background:var(--p);border:1px solid var(--b);border-radius:10px;padding:10px 14px;backdrop-filter:blur(12px);max-width:300px;display:block}}
-#ttl .ag{{font-size:8px;text-transform:uppercase;letter-spacing:2px;color:var(--a);font-weight:700}}
-#ttl h1{{font-size:14px;font-weight:700;color:#fff;margin-top:2px;line-height:1.2}}
-#ttl .mt{{font-size:9.5px;color:var(--m);margin-top:5px;line-height:1.4}}
-#mm{{position:fixed;bottom:14px;left:14px;z-index:10;border-radius:8px;overflow:hidden;border:1px solid var(--b);background:var(--p);backdrop-filter:blur(12px);padding:6px;cursor:pointer;display:block}}
-#mmi{{display:block;border-radius:4px;background-size:cover;background-position:center;pointer-events:none}}
-#mmv{{position:absolute;border:1.5px solid var(--a);background:rgba(211,47,47,.1);border-radius:2px;pointer-events:none}}
+#dl-btn{{position:fixed;top:14px;right:14px;z-index:10;width:auto;padding:0 14px;height:36px;border:none;border-radius:8px;background:rgba(67,160,71,.15);border:1px solid rgba(67,160,71,.3);color:#81C784;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;backdrop-filter:blur(12px);transition:background .15s}}
+#dl-btn:hover{{background:rgba(67,160,71,.3)}}
 #sp{{position:fixed;bottom:14px;right:14px;width:265px;background:var(--p);border:1px solid var(--b);border-radius:10px;padding:14px;z-index:12;backdrop-filter:blur(12px);transform:translateY(8px);opacity:0;pointer-events:none;transition:all .2s}}
 #sp.show{{transform:translateY(0);opacity:1;pointer-events:auto}}
 .sph{{display:flex;align-items:center;gap:10px;margin-bottom:8px}}
@@ -54,21 +42,8 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 #tt{{position:fixed;pointer-events:none;background:rgba(14,20,30,.92);border:1px solid var(--b);border-radius:6px;padding:6px 10px;font-size:10px;z-index:20;opacity:0;transition:opacity .1s;backdrop-filter:blur(8px);max-width:220px}}
 #tt .tn{{font-weight:600;color:#fff;margin-bottom:1px}}
 #tt .ts{{color:var(--m)}}
-#hint{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--p);border:1px solid var(--b);border-radius:10px;padding:14px 22px;z-index:15;text-align:center;backdrop-filter:blur(12px);transition:opacity .8s;pointer-events:none}}
-#hint.off{{opacity:0}}
-#hint p{{font-size:11px;color:var(--t);line-height:1.6}}
-#hint .hi{{color:var(--a);font-weight:600}}
-#hint .hk{{display:inline-block;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:4px;padding:1px 5px;font-size:9px;font-weight:600;margin:0 1px}}
-#eb{{position:fixed;top:56px;right:14px;background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.3);border-radius:8px;padding:8px 14px;z-index:10;font-size:10px;color:#FFB300;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(8px)}}
-#eb.show{{opacity:1;pointer-events:auto}}
-#toast{{position:fixed;top:60px;left:50%;transform:translateX(-50%) translateY(-20px);background:var(--p);border:1px solid var(--b);border-radius:8px;padding:10px 20px;font-size:11px;z-index:50;opacity:0;transition:all .3s;pointer-events:none;backdrop-filter:blur(12px);white-space:nowrap;max-width:92vw;text-align:center}}
-#toast.show{{opacity:1;transform:translateX(-50%) translateY(0)}}
-#toast.ok{{border-color:rgba(67,160,71,.3);color:#81C784}}
-#toast.no{{border-color:rgba(255,152,0,.3);color:#FFB74D}}
 @media(max-width:768px){{
-  #ttl{{max-width:200px;padding:8px 10px}}#ttl h1{{font-size:12px}}#ttl .mt{{display:none}}
-  #sp{{width:220px}}#mm{{display:none!important}}#hint{{max-width:90vw;padding:10px 14px}}
-  .dlbtn{{font-size:10px;padding:0 8px}}
+  #sp{{width:220px}}
 }}
 </style>
 </head>
@@ -78,25 +53,8 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
   <div id="mw"><img id="mi" alt="Map" draggable="false"></div>
 </div>
 
-<div id="ttl">
-  <div class="ag">DOST-PAGASA</div>
-  <h1>Tagoloan River Basin Hazard Map</h1>
-  <div class="mt">Basin Area: 1,704 km² — Misamis Oriental, Bukidnon, Agusan del Sur<br>May 2024</div>
-</div>
+<button id="dl-btn"><i class="fas fa-download"></i> Download</button>
 
-<div id="tb">
-  <button class="tbtn dlbtn" id="b-dl" title="Download"><i class="fas fa-download"></i> Download</button>
-  <div class="tsep"></div>
-  <button class="tbtn" id="b-zi" title="Zoom In"><i class="fas fa-plus"></i></button>
-  <button class="tbtn" id="b-zo" title="Zoom Out"><i class="fas fa-minus"></i></button>
-  <button class="tbtn" id="b-fit" title="Fit View"><i class="fas fa-expand"></i></button>
-  <div class="tsep"></div>
-  <button class="tbtn" id="b-edit" title="Move Stations (E)"><i class="fas fa-arrows-alt"></i></button>
-  <div class="tsep"></div>
-  <button class="tbtn" id="b-sta" title="Toggle Stations"><i class="fas fa-map-marker-alt" style="font-size:11px"></i></button>
-</div>
-
-<div id="mm"><div id="mmi"></div><div id="mmv"></div></div>
 <div id="sp">
   <div class="sph"><div class="spi" id="s-ic"><i class="fas fa-tint"></i></div><div><div class="spn" id="s-nm">--</div><div class="spt" id="s-tp">--</div></div><button class="spc" id="s-cl"><i class="fas fa-times"></i></button></div>
   <div class="spr"><span class="l">Elevation</span><span class="v" id="s-el">--</span></div>
@@ -107,9 +65,6 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 </div>
 <div id="cb"></div>
 <div id="tt"><div class="tn" id="t-tn">--</div><div class="ts" id="t-ts">--</div></div>
-<div id="hint"><p><span class="hi">Interactive Map</span><br>Drag to pan · Scroll to zoom · Click stations<br><span class="hk">+</span><span class="hk">-</span> Zoom · <span class="hk">R</span> Reset · <span class="hk">E</span> Move stations · <span class="hk">D</span> Download</p></div>
-<div id="eb"><i class="fas fa-info-circle"></i> Drag station markers to reposition</div>
-<div id="toast"></div>
 
 <script>
 var mi = document.getElementById('mi');
@@ -123,9 +78,7 @@ mi.onload = function(){{
   mw.style.height = Math.round(WW / ia) + 'px';
   cbs();
   fit();
-  setupMM();
   makeStations();
-  document.getElementById('hint').classList.add('off');
   ready = true;
   updMM();
 }};
@@ -158,18 +111,10 @@ function toast(m,t){{toast.textContent=m;toast.className='show '+(t||'');clearTi
 
 function cbs(){{var vw=innerWidth,vh=innerHeight;bs=Math.min(vw/WW,vh/(WW/ia))*.94}}
 function updTx(){{mw.style.transform='translate('+ox+'px,'+oy+'px) scale('+(bs*zm)+')'}}
-function fit(){{var vw=innerWidth,vh=innerHeight,mh=WW/ia;ox=(vw-WW*bs)/2;oy=(vh-mh*bs)/2;zm=1;updTx();updMM()}}
-function zAt(cx,cy,f){{var os=bs*zm,nz=Math.max(.3,Math.min(25,zm*f)),ns=bs*nz,mx=(cx-ox)/os,my=(cy-oy)/os;zm=nz;ox=cx-mx*ns;oy=cy-my*ns;updTx();updMM()}}
-
-function setupMM(){{var w=150,h=Math.round(w/ia);mm.style.width=(w+12)+'px';mm.style.height=(h+12)+'px';mmi.style.width=w+'px';mmi.style.height=h+'px';mmi.style.backgroundImage='url('+mi.src+')';mmi.style.backgroundSize='cover'}}
-function updMM(){{if(!ready)return;var s=bs*zm,mw2=WW,mh=WW/ia,x1=-ox/s,y1=-oy/s,x2=x1+innerWidth/s,y2=y1+innerHeight/s;var l=Math.max(0,x1/mw2*100),t=Math.max(0,y1/mh*100),w=Math.min(100,(x2-x1)/mw2*100),h=Math.min(100,(y2-y1)/mh*100);mmv.style.left=l+'%';mmv.style.top=t+'%';mmv.style.width=w+'%';mmv.style.height=h+'%';mmv.style.display=(w>=98&&h>=98)?'none':'block'}}
-mm.addEventListener('click',function(e){{if(!ready)return;var r=mmi.getBoundingClientRect(),mx=(e.clientX-r.left)/r.width,my=(e.clientY-r.top)/r.height,s=bs*zm;ox=innerWidth/2-mx*WW*s;oy=innerHeight/2-my*(WW/ia)*s;updTx();updMM()}});
-
-function ldPos(){{try{{var s=localStorage.getItem('tstp');if(s)JSON.parse(s).forEach(function(p){{if(ST[p.id]){{ST[p.id].x=p.x;ST[p.id].y=p.y}}}})}}catch(e){{}}}}
-function svPos(){{try{{localStorage.setItem('tstp',JSON.stringify(ST.map(function(s){{return{{id:s.id,x:+s.x.toFixed(2),y:+s.y.toFixed(2)}}}})))}}catch(e){{}}}}
+function fit(){{var vw=innerWidth,vh=innerHeight,mh=WW/ia;ox=(vw-WW*bs)/2;oy=(vh-mh*bs)/2;zm=1;updTx()}}
+function zAt(cx,cy,f){{var os=bs*zm,nz=Math.max(.3,Math.min(25,zm*f)),ns=bs*nz,mx=(cx-ox)/os,my=(cy-oy)/os;zm=nz;ox=cx-mx*ns;oy=cy-my*ns;updTx()}}
 
 function makeStations(){{
-  ldPos();
   ST.forEach(function(s){{
     var el=document.createElement('div');el.className='st';
     el.style.left=s.x+'%';el.style.top=s.y+'%';
@@ -180,7 +125,6 @@ function makeStations(){{
     var lb=document.createElement('div');lb.className='sl';lb.textContent=s.nm;
     el.appendChild(lb);
     el.addEventListener('mousedown',function(e){{stnDown(e,s.id)}});
-    el.addEventListener('touchstart',function(e){{stnTDown(e,s.id)}},{{passive:false}});
     mw.appendChild(el);sEls[s.id]=el;
   }});
 }}
@@ -209,15 +153,8 @@ function stnDown(e,id){{
   }}else{{
     selSt(id);var s=ST[id],ts=bs*Math.max(zm,2);
     ox=innerWidth/2-s.x/100*WW*ts;oy=innerHeight/2-s.y/100*(WW/ia)*ts;
-    zm=ts/bs;updTx();updMM();
+    zm=ts/bs;updTx();
   }}
-}}
-function stnTDown(e,id){{
-  e.stopPropagation();
-  if(edit&&e.touches.length===1){{e.preventDefault();dStn=id;var s=ST[id],s0=bs*zm;
-    dOff=[e.touches[0].clientX-(ox+s.x/100*WW*s0),e.touches[0].clientY-(oy+s.y/100*(WW/ia)*s0)];
-    sEls[id].classList.add('ed');
-  }}else if(!edit)selSt(id);
 }}
 
 vp.addEventListener('mousedown',function(e){{if(dStn!==null)return;drag=true;ds=[e.clientX,e.clientY];dox=ox;doy=oy}});
@@ -226,70 +163,42 @@ window.addEventListener('mousemove',function(e){{
     ST[dStn].x=Math.max(0,Math.min(100,((e.clientX-dOff[0]-ox)/s0/mw2)*100));
     ST[dStn].y=Math.max(0,Math.min(100,((e.clientY-dOff[1]-oy)/s0/mh)*100));
     sEls[dStn].style.left=ST[dStn].x+'%';sEls[dStn].style.top=ST[dStn].y+'%';
-    if(sel===dStn)document.getElementById('s-mp').textContent=ST[dStn].x.toFixed(1)+'%, '+ST[dStn].y.toFixed(1)+'%';
     return}}
-  if(drag){{ox=dox+(e.clientX-ds[0]);oy=doy+(e.clientY-ds[1]);updTx();updMM()}}
+  if(drag){{ox=dox+(e.clientX-ds[0]);oy=doy+(e.clientY-ds[1]);updTx()}}
   if(!ready)return;hov=-1;
   if(staVis){{var s0=bs*zm,mw2=WW,mh=WW/ia;
     for(var i=0;i<ST.length;i++){{var s=ST[i],px=ox+s.x/100*mw2*s0,py=oy+s.y/100*mh*s0;
       if(Math.hypot(e.clientX-px,e.clientY-py)<18){{hov=s.id;break}}}}}}
   if(hov>=0){{var s=ST[hov];document.getElementById('t-tn').textContent=s.nm;
-    document.getElementById('t-ts').textContent=SN[s.tp]+(edit?' \u2014 drag to move':' \u2014 click for details');
+    document.getElementById('t-ts').textContent=SN[s.tp];
     tt.style.opacity='1';tt.style.left=(e.clientX+14)+'px';tt.style.top=(e.clientY-10)+'px';
-    vp.style.cursor=edit?'move':'pointer';
+    vp.style.cursor='pointer';
   }}else{{tt.style.opacity='0';vp.style.cursor=drag?'grabbing':'grab'}}
   var s0=bs*zm;
   cb.textContent='X: '+((e.clientX-ox)/s0/WW*100).toFixed(1)+'%  Y: '+((e.clientY-oy)/s0/(WW/ia)*100).toFixed(1)+'%  |  Zoom: '+zm.toFixed(2)+'x';
 }});
 window.addEventListener('mouseup',function(e){{
-  if(dStn!==null){{sEls[dStn].classList.remove('ed');svPos();dStn=null;return}}
+  if(dStn!==null){{sEls[dStn].classList.remove('ed');dStn=null;return}}
   if(drag&&Math.hypot(e.clientX-ds[0],e.clientY-ds[1])<4&&!e.target.closest('.st'))selSt(-1);
   drag=false}});
 vp.addEventListener('wheel',function(e){{e.preventDefault();zAt(e.clientX,e.clientY,e.deltaY<0?1.15:.87)}},{{passive:false}});
 vp.addEventListener('dblclick',function(e){{zAt(e.clientX,e.clientY,2)}});
-vp.addEventListener('touchstart',function(e){{
-  if(dStn!==null)return;
-  if(e.touches.length===1){{drag=true;ds=[e.touches[0].clientX,e.touches[0].clientY];dox=ox;doy=oy}}
-  else if(e.touches.length===2){{drag=false;pD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);pM=[(e.touches[0].clientX+e.touches[1].clientX)/2,(e.touches[0].clientY+e.touches[1].clientY)/2]}}
-}},{{passive:false}});
-vp.addEventListener('touchmove',function(e){{e.preventDefault();
-  if(dStn!==null&&e.touches.length===1){{var s0=bs*zm,mw2=WW,mh=WW/ia;
-    ST[dStn].x=Math.max(0,Math.min(100,((e.touches[0].clientX-dOff[0]-ox)/s0/mw2)*100));
-    ST[dStn].y=Math.max(0,Math.min(100,((e.touches[0].clientY-dOff[1]-oy)/s0/mh)*100));
-    sEls[dStn].style.left=ST[dStn].x+'%';sEls[dStn].style.top=ST[dStn].y+'%';return}}
-  if(e.touches.length===1&&drag){{ox=dox+(e.touches[0].clientX-ds[0]);oy=doy+(e.touches[0].clientY-ds[1]);updTx();updMM()}}
-  else if(e.touches.length===2){{var nd=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);zAt(pM[0],pM[1],nd/pD);pD=nd}}
-}},{{passive:false}});
-vp.addEventListener('touchend',function(e){{
-  if(dStn!==null&&e.touches.length===0){{sEls[dStn].classList.remove('ed');svPos();dStn=null;return}}
-  if(e.touches.length===0)drag=false}});
 window.addEventListener('keydown',function(e){{
   switch(e.key){{
     case'+':case'=':zAt(innerWidth/2,innerHeight/2,1.25);break;
     case'-':case'_':zAt(innerWidth/2,innerHeight/2,.8);break;
-    case'ArrowLeft':ox+=40;updTx();updMM();break;
-    case'ArrowRight':ox-=40;updTx();updMM();break;
-    case'ArrowUp':oy+=40;updTx();updMM();break;
-    case'ArrowDown':oy-=40;updTx();updMM();break;
+    case'ArrowLeft':ox+=40;updTx();break;
+    case'ArrowRight':ox-=40;updTx();break;
+    case'ArrowUp':oy+=40;updTx();break;
+    case'ArrowDown':oy-=40;updTx();break;
     case'r':case'R':fit();break;
-    case'e':case'E':togEdit();break;
-    case'd':case'D':dlMap();break;
-    case'Escape':selSt(-1);if(edit)togEdit();break;
+    case'Escape':selSt(-1);break;
   }}
 }});
-document.getElementById('b-zi').addEventListener('click',function(){{zAt(innerWidth/2,innerHeight/2,1.4)}});
-document.getElementById('b-zo').addEventListener('click',function(){{zAt(innerWidth/2,innerHeight/2,.71)}});
-document.getElementById('b-fit').addEventListener('click',fit);
-document.getElementById('b-edit').addEventListener('click',togEdit);
-document.getElementById('b-sta').addEventListener('click',function(){{
-  staVis=!staVis;document.getElementById('b-sta').classList.toggle('on',!staVis);
-  sEls.forEach(function(el){{el.style.display=staVis?'':'none'}});if(!staVis)selSt(-1)}});
 document.getElementById('s-cl').addEventListener('click',function(){{selSt(-1)}});
 vp.addEventListener('contextmenu',function(e){{e.preventDefault()}});
 
-function togEdit(){{edit=!edit;document.getElementById('b-edit').classList.toggle('on',edit);eb.classList.toggle('show',edit);sEls.forEach(function(el){{el.style.cursor=edit?'move':'pointer'}})}}
-
-document.getElementById('b-dl').addEventListener('click',function(){{
+document.getElementById('dl-btn').addEventListener('click',function(){{
   if(!mi.src){{toast('No map loaded.','no');return}}
   var canvas=document.createElement('canvas');
   var ctx=canvas.getContext('2d');
