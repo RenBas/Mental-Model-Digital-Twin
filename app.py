@@ -19,10 +19,10 @@ from ui.gauges import render_pagasa_gauge, render_sim_gauge, render_waterlevel_g
 from ui.charts import render_network_graph, render_cluster_breakdown, render_cac_bubble
 from ui.insights import render_policy_insights
 from ui.map_html import get_map_html
-from ui.glossary import render_glossary  # <-- new
+from ui.glossary import render_glossary  # Glossary module
 
 st.set_page_config(
-    page_title="Tagoloan Flood-Prone Communities Digital Twin",
+    page_title="Tagoloan Mind–Flood Simulator",
     layout="wide",
     menu_items={"Get help": None, "Report a bug": None, "About": None}
 )
@@ -326,8 +326,10 @@ with st.sidebar:
 
 # ---------- Main Dashboard ----------
 barangay_title = st.session_state.current_barangay if st.session_state.current_barangay != "All Barangays" else "Municipal"
-st.title(f"Tagoloan Flood-Prone Communities Digital Twin ({barangay_title})")
-st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
+st.title("The Tagoloan Mind–Flood Simulator")
+st.caption(f"📍 {barangay_title} – Simulating community evacuation & relocation psychology under flood stress.")
+# Original location markdown now optional; kept for extra context
+# st.markdown("*Municipality of Tagoloan, Misamis Oriental*")
 
 if st.session_state.sensitivity_active:
     st.info("🔬 **Sensitivity Scenario Active** – The dashboard below reflects the selected sensitivity parameters. Click 'Restore Baseline' to return to the original calibrated state.")
