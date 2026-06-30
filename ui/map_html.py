@@ -2,8 +2,8 @@
 
 def get_map_html(image_src: str) -> str:
     """
-    Returns the full interactive map HTML with the given image_src
-    (either a data URL for local PNG, or a remote URL) pre-loaded.
+    Returns interactive map HTML that loads the given image immediately.
+    No upload screen – the map is ready as soon as the page renders.
     """
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -16,21 +16,7 @@ def get_map_html(image_src: str) -> str:
 :root{{--p:rgba(14,20,30,0.93);--a:#D32F2F;--t:#DDE4EC;--m:#6B7D8D;--b:rgba(255,255,255,0.08);--g:#43A047;--bl:#1E88E5;--y:#FFB300}}
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:var(--t)}}
-#upload-screen{{position:fixed;inset:0;background:#111820;display:flex;align-items:center;justify-content:center;z-index:200}}
-#upload-screen.gone{{display:none}}
-.ubox{{text-align:center;max-width:440px;padding:40px}}
-.ubox h1{{font-size:22px;font-weight:700;color:#fff;margin-bottom:6px}}
-.ubox .sub{{font-size:12px;color:var(--a);font-weight:600;text-transform:uppercase;letter-spacing:2px;margin-bottom:24px}}
-.ubox p{{font-size:13px;color:var(--m);line-height:1.6;margin-bottom:28px}}
-.drop{{border:2px dashed rgba(255,255,255,.12);border-radius:16px;padding:48px 32px;cursor:pointer;transition:all .2s;position:relative}}
-.drop:hover,.drop.over{{border-color:var(--a);background:rgba(211,47,47,.05)}}
-.drop i{{font-size:36px;color:var(--m);margin-bottom:14px;display:block;transition:color .2s}}
-.drop:hover i{{color:var(--a)}}
-.drop .dt{{font-size:14px;font-weight:600;color:var(--t);margin-bottom:4px}}
-.drop .dh{{font-size:11px;color:var(--m)}}
-.drop input{{position:absolute;inset:0;opacity:0;cursor:pointer}}
-#viewport{{position:fixed;inset:0;overflow:hidden;cursor:grab;display:none}}
-#viewport.on{{display:block}}
+#viewport{{position:fixed;inset:0;overflow:hidden;cursor:grab;display:block}}
 #viewport:active{{cursor:grabbing}}
 #mw{{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}}
 #mw img{{display:block;width:100%;height:100%;pointer-events:none;-webkit-user-drag:none}}
@@ -42,21 +28,18 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 @keyframes pu{{0%,100%{{opacity:.9;transform:scale(1)}}50%{{opacity:.35;transform:scale(1.4)}}}}
 .sl{{position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);white-space:nowrap;font-size:8.5px;font-weight:600;color:#fff;background:rgba(14,20,30,.88);padding:2px 6px;border-radius:3px;pointer-events:none;opacity:0;transition:opacity .12s}}
 .st:hover .sl,.st.sel .sl{{opacity:1}}
-#tb{{position:fixed;top:14px;right:14px;display:none;flex-direction:column;gap:4px;z-index:10}}
-#tb.on{{display:flex}}
+#tb{{position:fixed;top:14px;right:14px;display:flex;flex-direction:column;gap:4px;z-index:10}}
 .tbtn{{width:36px;height:36px;border:none;border-radius:8px;background:var(--p);color:var(--t);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(12px);border:1px solid var(--b);transition:background .15s,color .15s}}
 .tbtn:hover{{background:rgba(211,47,47,.2);color:#fff}}
 .tbtn.on{{background:rgba(211,47,47,.25);color:var(--a)}}
 .dlbtn{{width:auto;padding:0 14px;font-size:11px;font-weight:700;gap:7px;background:rgba(67,160,71,.15)!important;border-color:rgba(67,160,71,.3)!important;color:#81C784!important}}
 .dlbtn:hover{{background:rgba(67,160,71,.3)!important}}
 .tsep{{height:1px;background:var(--b);margin:2px 4px}}
-#ttl{{position:fixed;top:14px;left:14px;z-index:10;background:var(--p);border:1px solid var(--b);border-radius:10px;padding:10px 14px;backdrop-filter:blur(12px);max-width:300px;display:none}}
-#ttl.on{{display:block}}
+#ttl{{position:fixed;top:14px;left:14px;z-index:10;background:var(--p);border:1px solid var(--b);border-radius:10px;padding:10px 14px;backdrop-filter:blur(12px);max-width:300px;display:block}}
 #ttl .ag{{font-size:8px;text-transform:uppercase;letter-spacing:2px;color:var(--a);font-weight:700}}
 #ttl h1{{font-size:14px;font-weight:700;color:#fff;margin-top:2px;line-height:1.2}}
 #ttl .mt{{font-size:9.5px;color:var(--m);margin-top:5px;line-height:1.4}}
-#mm{{position:fixed;bottom:14px;left:14px;z-index:10;border-radius:8px;overflow:hidden;border:1px solid var(--b);background:var(--p);backdrop-filter:blur(12px);padding:6px;cursor:pointer;display:none}}
-#mm.on{{display:block}}
+#mm{{position:fixed;bottom:14px;left:14px;z-index:10;border-radius:8px;overflow:hidden;border:1px solid var(--b);background:var(--p);backdrop-filter:blur(12px);padding:6px;cursor:pointer;display:block}}
 #mmi{{display:block;border-radius:4px;background-size:cover;background-position:center;pointer-events:none}}
 #mmv{{position:absolute;border:1.5px solid var(--a);background:rgba(211,47,47,.1);border-radius:2px;pointer-events:none}}
 #sp{{position:fixed;bottom:14px;right:14px;width:265px;background:var(--p);border:1px solid var(--b);border-radius:10px;padding:14px;z-index:12;backdrop-filter:blur(12px);transform:translateY(8px);opacity:0;pointer-events:none;transition:all .2s}}
@@ -67,8 +50,7 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 .spc{{margin-left:auto;background:none;border:none;color:var(--m);cursor:pointer;font-size:13px;padding:4px}}.spc:hover{{color:#fff}}
 .spr{{display:flex;justify-content:space-between;font-size:10.5px;padding:3px 0;border-top:1px solid rgba(255,255,255,.04)}}
 .spr .l{{color:var(--m)}}.spr .v{{color:var(--t);font-weight:500;text-align:right;max-width:145px}}
-#cb{{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;color:rgba(255,255,255,.3);z-index:10;pointer-events:none;font-variant-numeric:tabular-nums;display:none}}
-#cb.on{{display:block}}
+#cb{{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;color:rgba(255,255,255,.3);z-index:10;pointer-events:none;font-variant-numeric:tabular-nums;display:block}}
 #tt{{position:fixed;pointer-events:none;background:rgba(14,20,30,.92);border:1px solid var(--b);border-radius:6px;padding:6px 10px;font-size:10px;z-index:20;opacity:0;transition:opacity .1s;backdrop-filter:blur(8px);max-width:220px}}
 #tt .tn{{font-weight:600;color:#fff;margin-bottom:1px}}
 #tt .ts{{color:var(--m)}}
@@ -91,20 +73,6 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 </style>
 </head>
 <body>
-
-<div id="upload-screen">
-  <div class="ubox">
-    <div class="sub">DOST-PAGASA</div>
-    <h1>Tagoloan River Basin<br>Interactive Map Maker</h1>
-    <p>Upload your hazard map image below. It will be turned into a fully interactive map with pan, zoom, and clickable monitoring stations — then downloadable as a single file.</p>
-    <label class="drop" id="drop-zone">
-      <i class="fas fa-cloud-upload-alt"></i>
-      <div class="dt">Drop your map image here</div>
-      <div class="dh">or click to browse — JPG, PNG, WebP</div>
-      <input type="file" id="fi" accept="image/*">
-    </label>
-  </div>
-</div>
 
 <div id="viewport">
   <div id="mw"><img id="mi" alt="Map" draggable="false"></div>
@@ -144,21 +112,24 @@ body{{overflow:hidden;background:#111820;font-family:'DM Sans',sans-serif;color:
 <div id="toast"></div>
 
 <script>
-(function(){{
-  var img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.src = '{image_src}';
-  img.onload = function(){{
-    document.getElementById('mi').src = img.src;
-  }};
-  img.onerror = function(){{
-    var fallback = new Image();
-    fallback.src = 'https://pubfiles.pagasa.dost.gov.ph/pagasaweb/images/basins/tagoloan-river-basin.jpg';
-    fallback.onload = function(){{ document.getElementById('mi').src = fallback.src; }};
-  }};
-}})();
+var mi = document.getElementById('mi');
+mi.src = '{image_src}';
+mi.onload = function(){{
+  var w = mi.naturalWidth, h = mi.naturalHeight;
+  if (w < 10 || h < 10) return;
+  var WW = 2200, ia = w / h;
+  var mw = document.getElementById('mw');
+  mw.style.width = WW + 'px';
+  mw.style.height = Math.round(WW / ia) + 'px';
+  cbs();
+  fit();
+  setupMM();
+  makeStations();
+  document.getElementById('hint').classList.add('off');
+  ready = true;
+  updMM();
+}};
 
-var WW = 2200;
 var ST = [
   {{id:0,nm:'Malaybalay Rain Gauge',tp:'rainfall',x:49,y:16,el:'1,280 m',inf:'Annual: 2,650mm | Installed: 2018',co:'8.15\u00B0N, 125.08\u00B0E'}},
   {{id:1,nm:'Impasug-ong Rain Gauge',tp:'rainfall',x:34,y:21,el:'1,400 m',inf:'Annual: 2,900mm | Installed: 2017',co:'8.42\u00B0N, 124.78\u00B0E'}},
@@ -178,43 +149,13 @@ var SN={{rainfall:'Rainfall Gauge',waterlevel:'Water Level Station',weather:'Wea
 var zm=1,ox=0,oy=0,bs=1,ia=1,drag=false,ds=[0,0],dox=0,doy=0;
 var edit=false,staVis=true,ready=false,sel=-1,hov=-1;
 var dStn=null,dOff=[0,0],pD=0,pM=[0,0],sEls=[];
-var imgDU=null;
 
-var vp=document.getElementById('viewport'),mw=document.getElementById('mw'),mi=document.getElementById('mi');
-var mm=document.getElementById('mm'),mmi=document.getElementById('mmi'),mmv=document.getElementById('mmv');
+var vp=document.getElementById('viewport'),mw=document.getElementById('mw'),mm=document.getElementById('mm'),mmi=document.getElementById('mmi'),mmv=document.getElementById('mmv');
 var sp=document.getElementById('sp'),tt=document.getElementById('tt'),cb=document.getElementById('cb');
 var hint=document.getElementById('hint'),eb=document.getElementById('eb'),toast=document.getElementById('toast');
-var dropZone=document.getElementById('drop-zone'),fi=document.getElementById('fi');
 
 function toast(m,t){{toast.textContent=m;toast.className='show '+(t||'');clearTimeout(toast._t);toast._t=setTimeout(function(){{toast.className=''}},4000)}}
 
-dropZone.addEventListener('dragover',function(e){{e.preventDefault();dropZone.classList.add('over')}});
-dropZone.addEventListener('dragleave',function(){{dropZone.classList.remove('over')}});
-dropZone.addEventListener('drop',function(e){{e.preventDefault();dropZone.classList.remove('over');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])}});
-fi.addEventListener('change',function(e){{if(e.target.files[0])loadFile(e.target.files[0])}});
-
-function loadFile(file){{
-  if(!file||!file.type.startsWith('image/')){{toast('Please select an image file.','no');return}}
-  var r=new FileReader();
-  r.onload=function(e){{imgDU=e.target.result;mi.src=imgDU;}};
-  r.readAsDataURL(file);
-}}
-
-mi.onload=function(){{
-  var w=mi.naturalWidth,h=mi.naturalHeight;
-  if(w<10||h<10)return;
-  ia=w/h;
-  mw.style.width=WW+'px';mw.style.height=Math.round(WW/ia)+'px';
-  cbs();fit();setupMM();makeStations();
-  document.getElementById('upload-screen').classList.add('gone');
-  vp.classList.add('on');document.getElementById('tb').classList.add('on');
-  document.getElementById('ttl').classList.add('on');mm.classList.add('on');
-  cb.classList.add('on');
-  ready=true;updMM();
-  setTimeout(function(){{hint.classList.add('off')}},4000);
-}};
-
-window.addEventListener('resize',function(){{if(ready){{cbs();updTx();updMM()}}}});
 function cbs(){{var vw=innerWidth,vh=innerHeight;bs=Math.min(vw/WW,vh/(WW/ia))*.94}}
 function updTx(){{mw.style.transform='translate('+ox+'px,'+oy+'px) scale('+(bs*zm)+')'}}
 function fit(){{var vw=innerWidth,vh=innerHeight,mh=WW/ia;ox=(vw-WW*bs)/2;oy=(vh-mh*bs)/2;zm=1;updTx();updMM()}}
@@ -348,36 +289,20 @@ vp.addEventListener('contextmenu',function(e){{e.preventDefault()}});
 
 function togEdit(){{edit=!edit;document.getElementById('b-edit').classList.toggle('on',edit);eb.classList.toggle('show',edit);sEls.forEach(function(el){{el.style.cursor=edit?'move':'pointer'}})}}
 
-document.getElementById('b-dl').addEventListener('click',dlMap);
-
-function dlMap(){{
-  if(!imgDU){{toast('No image to embed. This should not happen.','no');return}}
-  toast('Building download...','ok');
-  setTimeout(function(){{
-    try{{
-      var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
-      var pos=JSON.stringify(ST.map(function(s){{return{{id:s.id,x:+s.x.toFixed(2),y:+s.y.toFixed(2)}}}})).replace(/'/g,"\\'");
-      var preload="<script>try{{localStorage.setItem('tstp','"+pos+"')}}catch(e){{}}<\/script>";
-      var upScreen=document.getElementById('upload-screen').outerHTML;
-      var newUpScreen=upScreen.replace('id="upload-screen"','id="upload-screen" class="gone"');
-      html=html.replace(upScreen,newUpScreen);
-      var inject="<script>document.addEventListener('DOMContentLoaded',function(){{document.getElementById('mi').src='"+imgDU+"'}});<\/script>";
-      html=html.replace('</head>',preload+inject+'</head>');
-      html=html.replace('vp.classList.add(\'on\')','vp.classList.add(\'on\')');
-      html=html.replace('document.getElementById(\'tb\').classList.add(\'on\')','document.getElementById(\'tb\').classList.add(\'on\')');
-      html=html.replace('document.getElementById(\'ttl\').classList.add(\'on\')','document.getElementById(\'ttl\').classList.add(\'on\')');
-      html=html.replace('mm.classList.add(\'on\')','mm.classList.add(\'on\')');
-      html=html.replace('cb.classList.add(\'on\')','cb.classList.add(\'on\')');
-      var blob=new Blob([html],{{type:'text/html;charset=utf-8'}});
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');a.href=url;
-      a.download='Tagoloan_River_Basin_Interactive_Map.html';
-      a.style.display='none';document.body.appendChild(a);a.click();
-      setTimeout(function(){{document.body.removeChild(a);URL.revokeObjectURL(url)}},200);
-      toast('Downloaded — works offline, no internet needed','ok');
-    }}catch(err){{toast('Download failed: '+err.message,'no')}}
-  }},150);
-}}
+document.getElementById('b-dl').addEventListener('click',function(){{
+  if(!mi.src){{toast('No map loaded.','no');return}}
+  var canvas=document.createElement('canvas');
+  var ctx=canvas.getContext('2d');
+  var img=new Image();img.crossOrigin='anonymous';img.src=mi.src;
+  img.onload=function(){{
+    canvas.width=img.width;canvas.height=img.height;
+    ctx.drawImage(img,0,0);
+    var link=document.createElement('a');link.download='Tagoloan_River_Basin_Map.png';
+    link.href=canvas.toDataURL('image/png');
+    link.click();
+    toast('Map downloaded as PNG','ok');
+  }};
+}});
 </script>
 </body>
 </html>"""
